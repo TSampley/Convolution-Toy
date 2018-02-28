@@ -1,4 +1,9 @@
 <resources>
     <string name="app_name">Sprouts OCR</string>
-    <string name="button_capture">Capture</string>
+    <string name="capture_pic">Capture</string>
+    <string name="process_pic">Process</string>
+    <string name="retake_pic">Retake</string>
+
+    <string name="camera_loading">Camera Loading</string>
+    <string name="display_area_description">Display Area</string>
 </resources>

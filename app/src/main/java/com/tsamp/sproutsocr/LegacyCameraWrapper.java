@@ -1,6 +1,9 @@
 package com.tsamp.sproutsocr;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.hardware.Camera;
+import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 
@@ -8,19 +11,50 @@ import android.view.SurfaceView;
  * @author taushsampley
  */
 
-public class LegacyCameraWrapper implements CameraWrapper, SurfaceHolder.Callback{
+public class LegacyCameraWrapper implements CameraWrapper {
+
+    private static final String TAG = "LegacyCameraWrapper";
 
     private Camera camera;
-    private SurfaceView surfaceView;
+    private SurfaceHolder surfaceHolder;
+
+    private boolean previewing;
+    private ShutterCallback shutterCallback;
+    private RawCallback rawCallback;
+    private PostCallback postCallback;
+    private JpegCallback jpegCallback;
 
     private final CameraWrapper.Callback cameraWrapperCallback;
 
     LegacyCameraWrapper(SurfaceView view, CameraWrapper.Callback callback) {
         camera = null;
-        surfaceView = view;
-        surfaceView.getHolder().addCallback(this);
+        surfaceHolder = null;
+
+        previewing = false;
+        shutterCallback = null;
+        rawCallback = null;
+        postCallback = null;
 
         cameraWrapperCallback = callback;
+
+        view.getHolder().addCallback(new SurfaceCallback());
+    }
+
+    private void configCamera() {
+        boolean cameraOpened = camera != null;
+        boolean surfaceViewLoaded = surfaceHolder != null;
+
+        if (cameraOpened && surfaceViewLoaded) {
+            try {
+                camera.setPreviewDisplay(surfaceHolder);
+
+                shutterCallback = new ShutterCallback();
+                rawCallback = new RawCallback();
+                postCallback = new PostCallback();
+                jpegCallback = new JpegCallback();
+            } catch (Exception e) {e.printStackTrace();}
+        }
+//        camera.setDisplayOrientation(0);
     }
 
     // ============================= CameraWrapper
@@ -42,53 +76,90 @@ public class LegacyCameraWrapper implements CameraWrapper, SurfaceHolder.Callbac
 
     @Override
     public void open(int id) throws Exception {
+        Log.i(TAG, "open requested");
         camera = Camera.open(id);
-        camera.setPreviewDisplay(surfaceView.getHolder());
-        camera.startPreview();
+        configCamera();
     }
 
     @Override
     public boolean cameraReady() {
-        return camera != null;
+        return shutterCallback != null;
     }
 
     @Override
-    public boolean previewing() {
-        return false;
+    public synchronized boolean previewing() {
+        return previewing;
     }
 
     @Override
-    public void preview() throws Exception {
-
+    public synchronized void preview() throws Exception {
+        camera.startPreview();
+        previewing = true;
     }
 
     @Override
     public void capture() throws Exception {
-        cameraWrapperCallback.onImageCaptured(null);
-    }
-
-//    @Override
-//    public void close() throws Exception {
-//        if (camera != null) {
-//            camera.release();
-//            camera = null;
-//        }
-//    }
-
-    // ============================= SurfaceHolder.Callback
-
-    @Override
-    public void surfaceCreated(SurfaceHolder holder) {
-
+        camera.takePicture(shutterCallback, rawCallback, postCallback, jpegCallback);
     }
 
     @Override
-    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-
+    public void close() throws Exception {
+        if (camera != null) {
+            camera.release();
+            camera = null;
+        }
     }
 
-    @Override
-    public void surfaceDestroyed(SurfaceHolder holder) {
+    private class SurfaceCallback implements SurfaceHolder.Callback {
+        @Override
+        public void surfaceCreated(SurfaceHolder holder) {
+            Log.i(TAG, "surface created");
+            surfaceHolder = holder;
+            configCamera();
+        }
 
+        @Override
+        public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+            Log.i(TAG, "surface changed");
+        }
+
+        @Override
+        public void surfaceDestroyed(SurfaceHolder holder) {
+            Log.i(TAG, "surface destroyed");
+        }
+    }
+
+    private class ShutterCallback implements Camera.ShutterCallback {
+        @Override
+        public void onShutter() {
+            Log.i(TAG, "shutter activated");
+            synchronized (this) {
+                previewing = false;
+            }
+        }
+    }
+
+    private class RawCallback implements Camera.PictureCallback {
+        @Override
+        public void onPictureTaken(byte[] data, Camera camera) {
+            Log.i(TAG, "raw picture taken");
+        }
+    }
+
+    private class PostCallback implements Camera.PictureCallback {
+        @Override
+        public void onPictureTaken(byte[] data, Camera camera) {
+            Log.i(TAG, "post picture received");
+        }
+    }
+
+    private class JpegCallback implements Camera.PictureCallback {
+        @Override
+        public void onPictureTaken(byte[] data, Camera camera) {
+            Log.i(TAG, "jpeg receieved");
+
+            Bitmap bmp = BitmapFactory.decodeByteArray(data, 0, data.length);
+            cameraWrapperCallback.onImageCaptured(bmp);
+        }
     }
 }

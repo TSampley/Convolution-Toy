@@ -1,9 +1,12 @@
 package com.tsamp.sproutsocr;
 
 import android.Manifest;
-import android.media.Image;
+import android.graphics.Bitmap;
+import android.opengl.GLSurfaceView;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.PermissionChecker;
@@ -11,6 +14,8 @@ import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
 import android.view.SurfaceView;
 import android.view.View;
+import android.widget.Button;
+import android.widget.TextView;
 
 /**
  * {@code MainActivity} takes care of all startup steps.
@@ -31,7 +36,11 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int PERMISSION_REQUEST_CAMERA = 1;
 
-    private SurfaceView view;
+    private SurfaceView surfaceView;
+    private GLSurfaceView glSurfaceView;
+    private TextView textView;
+    private Button buttonCapture;
+    private Button buttonProcess;
 
     private CameraHandler cameraHandler;
     private Thread cameraThread;
@@ -49,11 +58,18 @@ public class MainActivity extends AppCompatActivity {
                 cameraHandler.camera.capture();
             } else {
                 Log.i(TAG, "CONTINUE PREVIEW");
+                buttonCapture.setText(R.string.capture_pic);
+                buttonProcess.setEnabled(false);
+
                 cameraHandler.camera.preview();
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    public void onProcess(View sender) {
+
     }
 
     // ============================= FragmentActivity
@@ -64,7 +80,12 @@ public class MainActivity extends AppCompatActivity {
 
         setContentView(R.layout.activity_main);
 
-        view = findViewById(R.id.surfaceView);
+        surfaceView = findViewById(R.id.surfaceView);
+        glSurfaceView = findViewById(R.id.glView);
+        textView = findViewById(R.id.textView);
+        buttonCapture = findViewById(R.id.button_capture);
+        buttonProcess = findViewById(R.id.button_process);
+
         cameraHandler = new CameraHandler();
         cameraThread = new Thread(cameraHandler);
     }
@@ -85,6 +106,30 @@ public class MainActivity extends AppCompatActivity {
                         new String[]{Manifest.permission.CAMERA}, PERMISSION_REQUEST_CAMERA);
                 break;
         }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+
+        try {
+            cameraHandler.camera.close();
+        } catch (Exception e) {e.printStackTrace();}
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+
+        cameraHandler.handler.post(new Runnable() {
+            @Override
+            public void run() {
+                Looper looper = Looper.myLooper();
+                if (looper != null) {
+                    looper.quit();
+                }
+            }
+        });
     }
 
     @Override
@@ -109,19 +154,26 @@ public class MainActivity extends AppCompatActivity {
     private class CameraHandler implements Runnable, CameraWrapper.Callback {
 
         CameraWrapper camera;
+        private Handler handler;
 
         CameraHandler() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                camera = new Camera2Wrapper(getApplicationContext(), view, this);
+                camera = new Camera2Wrapper(getApplicationContext(), surfaceView, this);
             } else {
-                camera = new LegacyCameraWrapper(view, this);
+                camera = new LegacyCameraWrapper(surfaceView, this);
             }
+            handler = null;
         }
 
         // ============================= Runnable
 
         @Override
         public void run() {
+            // prep the Looper and Handler ASAP so we can start queueing messages.
+            Looper.prepare();
+            Looper myLooper = Looper.myLooper();
+            handler = new Handler(myLooper);
+
             try {
                 Log.i(TAG, "opening");
                 camera.open(0);
@@ -130,6 +182,12 @@ public class MainActivity extends AppCompatActivity {
                 while (!camera.cameraReady()) {
                     Thread.sleep(10);
                 }
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        textView.setVisibility(View.INVISIBLE);
+                    }
+                });
                 // camera ready
                 Log.i(TAG, "ready to preview");
 
@@ -137,13 +195,24 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception e) {
                 e.printStackTrace();
             }
+
+            // after initial camera setup, dedicate this Thread to receiving messages.
+            Looper.loop();
         }
 
         // ============================= CameraWrapper.Callback
 
         @Override
-        public void onImageCaptured(Image capturedImage) {
+        public void onImageCaptured(Bitmap bmp) {
+            Log.i(TAG, "image captured");
 
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    buttonCapture.setText(R.string.retake_pic);
+                    buttonProcess.setEnabled(true);
+                }
+            });
         }
     }
 }

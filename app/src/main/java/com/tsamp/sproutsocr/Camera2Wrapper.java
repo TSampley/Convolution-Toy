@@ -13,6 +13,7 @@ import android.hardware.camera2.CaptureFailure;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.TotalCaptureResult;
+import android.media.Image;
 import android.media.ImageReader;
 import android.os.Handler;
 import android.os.Looper;
@@ -63,7 +64,7 @@ public class Camera2Wrapper extends CameraDevice.StateCallback implements Camera
     Man             -> Pro ^ Cam
     Srf             -> Pre
     Cam ^ Pre       -> PR
-    Cam ^ Pre ^ Pro -> SR
+    Cam ^ Pro       -> SR
     PR ^ SR         -> Ses
      */
 
@@ -84,6 +85,7 @@ public class Camera2Wrapper extends CameraDevice.StateCallback implements Camera
     private CaptureRequest singleRequest;
 
     private ImageReader imageReader;
+    private Image lastImage;
     private final CaptureStateCallback captureStateCallback;
     private final CameraCaptureCallback previewCaptureCallback;
     private final CameraCaptureCallback snapshotCaptureCallback;
@@ -100,14 +102,15 @@ public class Camera2Wrapper extends CameraDevice.StateCallback implements Camera
         previewRequest = null;
         singleRequest = null;
 
-        surfaceView.getHolder().addCallback(new SurfaceCallback());
-
         imageReader = null;
+        lastImage = null;
         captureStateCallback = new CaptureStateCallback();
         previewCaptureCallback = new CameraCaptureCallback(0, null);
         snapshotCaptureCallback = new CameraCaptureCallback(1, callback);
 
         callbackHandler = new Handler(Looper.getMainLooper());
+
+        surfaceView.getHolder().addCallback(new SurfaceCallback());
     }
 
     // Only called when camera, processSurface, and previewSurface are all available
@@ -144,7 +147,7 @@ public class Camera2Wrapper extends CameraDevice.StateCallback implements Camera
 
                 Log.i(TAG, "building singleRequest");
                 // request for taking a picture
-                builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_ZERO_SHUTTER_LAG);
+                builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
                 builder.addTarget(processSurface);
                 builder.addTarget(previewSurface);
                 singleRequest = builder.build();
@@ -154,8 +157,8 @@ public class Camera2Wrapper extends CameraDevice.StateCallback implements Camera
                 surfaces.add(previewSurface);
                 surfaces.add(processSurface);
                 camera.createCaptureSession(surfaces, captureStateCallback, callbackHandler);
-                // result will be in #onConfigured(CameraCaptureSession) or
-                // #onConfigureFailed(CameraCapture Session)
+                // result will be in CaptureStateCallback#onConfigured(CameraCaptureSession) or
+                // CaptureStateCallback#onConfigureFailed(CameraCapture Session)
             } catch (CameraAccessException e) {
                 e.printStackTrace();
             }
@@ -236,22 +239,25 @@ public class Camera2Wrapper extends CameraDevice.StateCallback implements Camera
 
     @Override
     public void preview() throws Exception {
+        Log.i(TAG, "session preview request");
         captureSession.setRepeatingRequest(previewRequest, previewCaptureCallback, callbackHandler);
     }
 
     @Override
     public void capture() throws Exception {
-        captureSession.abortCaptures();
+        captureSession.stopRepeating();
         captureSession.capture(singleRequest, snapshotCaptureCallback, callbackHandler);
     }
 
-//    @Override
-//    public void close() throws Exception {
-//        if (camera != null) {
-//            camera.close();
-//            camera = null;
-//        }
-//    }
+    @Override
+    public void close() throws Exception {
+        if (camera != null) {
+            camera.close();
+            camera = null;
+
+            imageReader.close();
+        }
+    }
 
     private class SurfaceCallback implements SurfaceHolder.Callback {
         @Override
@@ -269,7 +275,7 @@ public class Camera2Wrapper extends CameraDevice.StateCallback implements Camera
 
         @Override
         public void surfaceDestroyed(SurfaceHolder holder) {
-
+            Log.i(TAG, "surface destroyed");
         }
     }
 
@@ -356,8 +362,12 @@ public class Camera2Wrapper extends CameraDevice.StateCallback implements Camera
             // a single capture has completed. if this is a repeating request, there could be more
             // captures coming. #onCaptureSequenceCompleted is called when it's completely done.
             if (callback != null) {
-                imageReader.close();
-                callback.onImageCaptured(imageReader.acquireLatestImage());
+                if (lastImage != null) {
+                    lastImage.close();
+                }
+                lastImage = imageReader.acquireLatestImage();
+
+                callback.onImageCaptured(null);
             }
         }
 
