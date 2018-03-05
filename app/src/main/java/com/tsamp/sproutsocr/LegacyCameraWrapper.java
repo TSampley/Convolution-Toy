@@ -1,7 +1,6 @@
 package com.tsamp.sproutsocr;
 
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
+import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
 import android.util.Log;
 import android.view.SurfaceHolder;
@@ -24,9 +23,9 @@ public class LegacyCameraWrapper implements CameraWrapper {
     private PostCallback postCallback;
     private JpegCallback jpegCallback;
 
-    private final CameraWrapper.Callback cameraWrapperCallback;
+    private final SnapshotCallback snapshotCallback;
 
-    LegacyCameraWrapper(SurfaceView view, CameraWrapper.Callback callback) {
+    LegacyCameraWrapper(SurfaceView view, SnapshotCallback snapshotCallback) {
         camera = null;
         surfaceHolder = null;
 
@@ -35,7 +34,7 @@ public class LegacyCameraWrapper implements CameraWrapper {
         rawCallback = null;
         postCallback = null;
 
-        cameraWrapperCallback = callback;
+        this.snapshotCallback = snapshotCallback;
 
         view.getHolder().addCallback(new SurfaceCallback());
     }
@@ -58,6 +57,12 @@ public class LegacyCameraWrapper implements CameraWrapper {
     }
 
     // ============================= CameraWrapper
+
+    @Override
+    public boolean canOpen() {
+        // TODO: consider implementing fully
+        return false;
+    }
 
 //    @Override
 //    public String[] cameraList() {
@@ -82,13 +87,13 @@ public class LegacyCameraWrapper implements CameraWrapper {
     }
 
     @Override
-    public boolean cameraReady() {
-        return shutterCallback != null;
+    public int createSurfaceTexture(int imageUnit) {
+        return -1;
     }
 
     @Override
-    public synchronized boolean previewing() {
-        return previewing;
+    public boolean cameraReady() {
+        return shutterCallback != null;
     }
 
     @Override
@@ -98,8 +103,18 @@ public class LegacyCameraWrapper implements CameraWrapper {
     }
 
     @Override
+    public synchronized boolean previewing() {
+        return previewing;
+    }
+
+    @Override
     public void capture() throws Exception {
         camera.takePicture(shutterCallback, rawCallback, postCallback, jpegCallback);
+    }
+
+    @Override
+    public SurfaceTexture getSurfaceTexture() {
+        return null;
     }
 
     @Override
@@ -158,8 +173,7 @@ public class LegacyCameraWrapper implements CameraWrapper {
         public void onPictureTaken(byte[] data, Camera camera) {
             Log.i(TAG, "jpeg receieved");
 
-            Bitmap bmp = BitmapFactory.decodeByteArray(data, 0, data.length);
-            cameraWrapperCallback.onImageCaptured(bmp);
+            snapshotCallback.onImageCaptured();
         }
     }
 }

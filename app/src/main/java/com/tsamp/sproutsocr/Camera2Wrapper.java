@@ -3,7 +3,7 @@ package com.tsamp.sproutsocr;
 import android.annotation.TargetApi;
 import android.content.Context;
 import android.graphics.ImageFormat;
-import android.graphics.Rect;
+import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -13,8 +13,10 @@ import android.hardware.camera2.CaptureFailure;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.TotalCaptureResult;
+import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
-import android.media.ImageReader;
+import android.opengl.GLES11Ext;
+import android.opengl.GLES20;
 import android.os.Handler;
 import android.os.Looper;
 import android.support.annotation.NonNull;
@@ -25,18 +27,20 @@ import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 
-import java.util.ArrayList;
+import java.util.Arrays;
 
 /**
  * <ol>
  *     <li>Get {@link CameraManager} from passed in {@code Context}.</li>
- *     <li>Retrieve {@link Surface} from passed in {@link SurfaceView} objects.</li>
+ *     <li>Register callbacks on passed in {@link SurfaceView} to retrieve {@link Surface} once it's
+ *     created.</li>
  *     <li>On {@link #open(int)}, attempt to retrieve the {@link CameraDevice}.
  *     <ol>
- *         <li>Get {@code CameraDevice} from
- *         {@link CameraManager#openCamera(String, CameraDevice.StateCallback, Handler)}.</li>
- *         <li>Once {@link #onOpened(CameraDevice)} is called, create a new capture session.</li>
- *         <li>Once {@link CaptureStateCallback#onConfigured(CameraCaptureSession)} is called,
+ *         <li>Call {@link CameraManager#openCamera(String, CameraDevice.StateCallback, Handler)}.</li>
+ *         <li>Once {@link CameraStateCallback#onOpened(CameraDevice)} is called, save the opened
+ *         camera instance. </li>
+ *         <li>Create a new capture session.</li>
+ *         <li>Once {@link SessionStateCallback#onConfigured(CameraCaptureSession)} is called,
  *         create a {@link CaptureRequest}.</li>
  *     </ol>
  *     </li>
@@ -45,147 +49,184 @@ import java.util.ArrayList;
  */
 
 @TargetApi(21)
-public class Camera2Wrapper extends CameraDevice.StateCallback implements CameraWrapper {
+public class Camera2Wrapper implements CameraWrapper {
 
     private static final String TAG = "Camera2Wrapper";
     /*
-    CP: camera permission
+    CP: activeCamera permission
     Srf: surface created
     Man: manager usable
-    Cam: camera usable
+    Cam: activeCamera usable
     Pre: preview surface
     Pro: process surface
-    Cap: camera capture session
+    Cap: activeCamera capture session
     PR: preview request
     SR: single request
     Ses: session configured
 
+    Pro
     CP              -> Man
-    Man             -> Pro ^ Cam
+    Man             -> Cam
     Srf             -> Pre
     Cam ^ Pre       -> PR
-    Cam ^ Pro       -> SR
+    Cam ^ Pre ^ Pro -> SR
     PR ^ SR         -> Ses
      */
 
-    // manager is available when we know we have camera permission
+    // manager is available when we know we have activeCamera permission
     private CameraManager manager;
-    // camera is available when #onOpened(CameraDevice) is called
-    private CameraDevice camera;
+    private CameraCharacteristics characteristics;
+    private StreamConfigurationMap streamConfigurationMap;
+    // activeCamera is available when #onOpened(CameraDevice) is called
+    private CameraDevice activeCamera;
+
     // previewSurface is available when SurfaceCallback#surfaceCreated(SurfaceHolder) is called
     private Surface previewSurface;
-    // processSurface is available when a camera is selected to open
+    // processSurface is available when a activeCamera is selected to open
     private Surface processSurface;
-    // captureSession is available after the camera and both surfaces are available
-    private CameraCaptureSession captureSession;
 
-    // previewRequest is available once camera and previewSurface is available
+    // previewRequest is available once activeCamera and previewSurface is available
     private CaptureRequest previewRequest;
-    // singleRequest is available once camera, processSurface, and previewSurface is available
+    // singleRequest is available once activeCamera, processSurface, and previewSurface is available
     private CaptureRequest singleRequest;
 
-    private ImageReader imageReader;
-    private Image lastImage;
-    private final CaptureStateCallback captureStateCallback;
-    private final CameraCaptureCallback previewCaptureCallback;
-    private final CameraCaptureCallback snapshotCaptureCallback;
+    // captureSession is available after the activeCamera and both surfaces are available
+    private CameraCaptureSession captureSession;
+
+    private SurfaceTexture surfaceTexture;
+    private final CameraStateCallback cameraStateCallback;
+    private final SessionStateCallback sessionStateCallback;
+    private final SessionCaptureCallback previewCaptureCallback;
+    private final SessionCaptureCallback snapshotCaptureCallback;
 
     private final Handler callbackHandler;
 
     Camera2Wrapper(@NonNull Context context, @NonNull SurfaceView surfaceView,
-                   @NonNull CameraWrapper.Callback callback) {
+                   @NonNull SnapshotCallback snapshotCallback) {
         manager = (CameraManager)context.getSystemService(Context.CAMERA_SERVICE);
-        camera = null;
+        characteristics = null;
+        streamConfigurationMap = null;
+        activeCamera = null;
         previewSurface = null;
         processSurface = null;
         captureSession = null;
         previewRequest = null;
         singleRequest = null;
 
-        imageReader = null;
-        lastImage = null;
-        captureStateCallback = new CaptureStateCallback();
-        previewCaptureCallback = new CameraCaptureCallback(0, null);
-        snapshotCaptureCallback = new CameraCaptureCallback(1, callback);
+        surfaceTexture = null;
+        cameraStateCallback = new CameraStateCallback();
+        sessionStateCallback = new SessionStateCallback();
+        previewCaptureCallback = new SessionCaptureCallback(0, null);
+        previewCaptureCallback.setLogLevel(Log.VERBOSE);
+        snapshotCaptureCallback = new SessionCaptureCallback(1, snapshotCallback);
+        snapshotCaptureCallback.setLogLevel(Log.DEBUG);
 
         callbackHandler = new Handler(Looper.getMainLooper());
 
         surfaceView.getHolder().addCallback(new SurfaceCallback());
     }
 
-    // Only called when camera, processSurface, and previewSurface are all available
-    private void configSession() {
-        boolean surfaceViewLoaded = previewSurface != null;
-        boolean cameraCalledToOpen = processSurface != null;
-        boolean cameraAcquired = camera != null;
+    private void buildRequests() throws CameraAccessException {
+        Log.i(TAG, "building previewRequest");
 
-        if (surfaceViewLoaded && cameraCalledToOpen && cameraAcquired) {
-            Log.i(TAG, "camera ^ previewSurface ^ processSurface");
-            try {
-                Log.i(TAG, "building previewRequest");
-                // request for previewing camera
-                CaptureRequest.Builder builder =
-                        camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-                CameraCharacteristics characteristics = manager.getCameraCharacteristics(camera.getId());
-                Range<Integer>[] availableRanges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
-                if (availableRanges != null && availableRanges.length > 0) {
-                    Range<Integer> lowest = availableRanges[0];
-                    for (int i = 1; i < availableRanges.length; i++) {
-                        Range<Integer> range = availableRanges[i];
-                        if (range.getLower() < lowest.getLower() ||
-                                (range.getLower().equals(lowest.getLower()) &&
-                                        (range.getUpper() < lowest.getUpper()))) {
-                            lowest = range;
-                        }
-                    }
-                    lowest = new Range<>(10, 10);
-                    builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, lowest);
-                    Log.i(TAG, "frame rate set to " + lowest.getLower());
-                }
-                builder.addTarget(previewSurface);
-                previewRequest = builder.build();
+        if (streamConfigurationMap == null) {
+            throw new IllegalStateException("SCALAR_STREAM_CONFIGURATION_MAP is null " +
+                    "in CameraCharacteristics");
+        } else {
+//            int imageFormat = ImageFormat.YUV_420_888;
+//            Size imageSize;
+            Range<Integer> aeTargetFPSRange = new Range<>(15, 15);
 
-                Log.i(TAG, "building singleRequest");
-                // request for taking a picture
-                builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
-                builder.addTarget(processSurface);
-                builder.addTarget(previewSurface);
-                singleRequest = builder.build();
+//            // set image output size
+//            Size[] outputSizes = streamConfigMap.getOutputSizes(imageFormat);
+//            Log.i(TAG, "SIZES: ");
+//            for (Size size : outputSizes) {
+//                Log.i(TAG, size.toString());
+//            }
+//            imageSize = outputSizes[outputSizes.length-1];
 
-                Log.i(TAG, "creating capture session");
-                ArrayList<Surface> surfaces = new ArrayList<>(1);
-                surfaces.add(previewSurface);
-                surfaces.add(processSurface);
-                camera.createCaptureSession(surfaces, captureStateCallback, callbackHandler);
-                // result will be in CaptureStateCallback#onConfigured(CameraCaptureSession) or
-                // CaptureStateCallback#onConfigureFailed(CameraCapture Session)
-            } catch (CameraAccessException e) {
-                e.printStackTrace();
-            }
+            // set Auto Exposure FPS Range
+            Range<Integer>[] availableRanges =
+                    characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
+            if (availableRanges != null) {
+                // just choose the first one
+                aeTargetFPSRange = availableRanges[0];
+            } //else {
+//                // these values are according to documentation in
+//                // CameraCharacters.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES
+//                int min = 15;
+//                Range<Integer>[] fpsRange =
+//                        streamConfigMap.getHighSpeedVideoFpsRangesFor(outputSizes[0]);
+//                int max = fpsRange[0].getLower();
+//                aeTargetFPSRange = new Range<>(min, max);
+//            }
+
+            // request for previewing activeCamera
+            CaptureRequest.Builder builder =
+                    activeCamera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+            // set image size
+
+            builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, aeTargetFPSRange);
+            builder.addTarget(previewSurface);
+            builder.get(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE);
+            previewRequest = builder.build();
+
+            Log.i(TAG, "building singleRequest");
+            // request for taking a picture and processing it
+            builder = activeCamera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+            builder.addTarget(processSurface);
+//        builder.addTarget(previewSurface);
+            singleRequest = builder.build();
         }
     }
 
-    // ============================= CameraDevice.StateCallback
-
-    @Override
-    public void onOpened(@NonNull CameraDevice camera) {
-        Log.i(TAG, "camera opened");
-        this.camera = camera;
-
-        configSession();
-    }
-
-    @Override
-    public void onDisconnected(@NonNull CameraDevice camera) {
-        Log.i(TAG, "disconnected");
-    }
-
-    @Override
-    public void onError(@NonNull CameraDevice camera, int error) {
-        Log.i(TAG, "error");
-    }
-
     // ============================= CameraWrapper
+
+    @Override
+    public int createSurfaceTexture(int imageUnit) {
+        Log.i(TAG, "creating surface texture in context of " + Thread.currentThread());
+        int[] texHandles = new int[1];
+        GLES20.glGenTextures(1, texHandles, 0);
+        int textureHandle = texHandles[0];
+        if (textureHandle >= 0) {
+            // set texture unit
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0 + imageUnit);
+            // bind texture object to external target
+            GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureHandle);
+            // set the target's params
+            GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
+                    GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST);
+            GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
+                    GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST);
+
+            surfaceTexture = new SurfaceTexture(textureHandle, false);
+
+            try {
+                // for now assume camera 0
+                String stringId = manager.getCameraIdList()[0];
+                CameraCharacteristics characteristics = manager.getCameraCharacteristics(stringId);
+                StreamConfigurationMap streamConfigurationMap =
+                        characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+                Size[] sizes = streamConfigurationMap.getOutputSizes(ImageFormat.YUV_420_888);
+                if (sizes != null) {
+                    Size largest = sizes[0];
+                    surfaceTexture.setDefaultBufferSize(largest.getWidth(), largest.getHeight());
+                }
+            } catch (CameraAccessException e) {
+                e.printStackTrace();
+            }
+
+            processSurface = new Surface(surfaceTexture);
+        } else {
+            throw new IllegalStateException("Unable to acquire texture handle.");
+        }
+        return textureHandle;
+    }
+
+    @Override
+    public boolean canOpen() {
+        return previewSurface != null && processSurface != null;
+    }
 
 //    @Override
 //    public String[] cameraList() {
@@ -200,28 +241,34 @@ public class Camera2Wrapper extends CameraDevice.StateCallback implements Camera
 
     @Override
     public void open(int id) throws Exception {
+        if (!canOpen()) {
+            throw new IllegalStateException("Can't call #open(int) while #canOpen() returns false.");
+        }
         try {
             String stringId = manager.getCameraIdList()[id];
             Log.i(TAG, "requested open(" + id + ":" + stringId + ")");
 
             // processSurface can be created as soon as we know which Camera is requested
-            CameraCharacteristics characteristics = manager.getCameraCharacteristics(stringId);
-            Rect rect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
-            Size size = characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE);
-            if (rect == null) {
-                rect = new Rect(0, 0, 0, 0);
-            }
-            if (size == null) {
-                size = new Size(0, 0);
-            }
-            imageReader = ImageReader.newInstance(rect.width(), rect.height(),
-                    ImageFormat.YUV_420_888, 2);
-            processSurface = imageReader.getSurface();
-            Log.i(TAG, "ACTIVE PIXELS " + rect.toShortString() + " within " + size.toString());
+//            Rect rect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+//            Size size = characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE);
+//            if (rect == null) {
+//                rect = new Rect(0, 0, 0, 0);
+//            }
+//            if (size == null) {
+//                size = new Size(0, 0);
+//            }
+//            imageReader = ImageReader.newInstance(rect.width(), rect.height(),
+//                    ImageFormat.YUV_420_888, 2);
+//            Log.i(TAG, "ACTIVE PIXELS " + rect.toShortString() + " within " + size.toString());
+            characteristics = manager.getCameraCharacteristics(stringId);
+            streamConfigurationMap =
+                    characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
 
-            manager.openCamera(stringId, this, callbackHandler);
-            // result will be found in #onOpened(CameraDevice)
-            Log.i(TAG, "opening camera");
+//            Size size = streamConfigurationMap.getOutputSizes(ImageFormat.YUV_420_888)[0];
+//            surfaceCallback.setFixedSize(size);
+            manager.openCamera(stringId, cameraStateCallback, callbackHandler);
+            // result will be found in CameraStateCallback#onOpened(CameraDevice)
+            Log.i(TAG, "opening activeCamera");
         } catch (SecurityException e) {
             e.printStackTrace();
         }
@@ -229,7 +276,14 @@ public class Camera2Wrapper extends CameraDevice.StateCallback implements Camera
 
     @Override
     public boolean cameraReady() {
-        return captureSession != null;
+        return captureSession != null && previewRequest != null && singleRequest != null;
+    }
+
+    @Override
+    public void preview() throws Exception {
+        Log.i(TAG, "session preview request");
+        captureSession.setRepeatingRequest(previewRequest, previewCaptureCallback, callbackHandler);
+        // results will appear in methods of SessionCaptureCallback
     }
 
     @Override
@@ -238,34 +292,65 @@ public class Camera2Wrapper extends CameraDevice.StateCallback implements Camera
     }
 
     @Override
-    public void preview() throws Exception {
-        Log.i(TAG, "session preview request");
-        captureSession.setRepeatingRequest(previewRequest, previewCaptureCallback, callbackHandler);
+    public void capture() throws Exception {
+        Log.i(TAG, "capture requested");
+        captureSession.stopRepeating();
+        captureSession.capture(singleRequest, snapshotCaptureCallback, callbackHandler);
+        // results will appear in methods of SessionCaptureCallback
     }
 
     @Override
-    public void capture() throws Exception {
-        captureSession.stopRepeating();
-        captureSession.capture(singleRequest, snapshotCaptureCallback, callbackHandler);
+    public SurfaceTexture getSurfaceTexture() {
+        return surfaceTexture;
     }
 
     @Override
     public void close() throws Exception {
-        if (camera != null) {
-            camera.close();
-            camera = null;
+        Log.i(TAG, "close activeCamera requested");
+        if (activeCamera == null) {
+            Log.i(TAG, "no known activeCamera already open");
+        } else {
+            // keep reference to manager
+            // close and release activeCamera
+            activeCamera.close();
+            activeCamera = null;
 
-            imageReader.close();
+            // close and release surfaces if they were ever acquired
+            if (previewSurface != null) {
+                previewSurface.release();
+                previewSurface = null;
+            }
+            if (processSurface != null) {
+                processSurface.release();
+                processSurface = null;
+            }
+
+            // release requests
+            previewRequest = null;
+            singleRequest = null;
+
+            // release session - if there was an activeCamera, session will be closed as a result
+            // of activeCamera being closed
+            captureSession = null;
+
+            // release surfaceTexture if it was ever created
+            if (surfaceTexture != null) {
+                surfaceTexture.release();
+                surfaceTexture = null;
+            }
+
+            // hold on to Callback instances in case this Wrapper gets re-opened
+
+            // results will appear in methods of SessionStateCallback
         }
     }
 
     private class SurfaceCallback implements SurfaceHolder.Callback {
+
         @Override
         public void surfaceCreated(SurfaceHolder holder) {
-            Log.i(TAG, "surface ready");
+            Log.i(TAG, "surface created");
             previewSurface = holder.getSurface();
-
-            configSession();
         }
 
         @Override
@@ -276,10 +361,48 @@ public class Camera2Wrapper extends CameraDevice.StateCallback implements Camera
         @Override
         public void surfaceDestroyed(SurfaceHolder holder) {
             Log.i(TAG, "surface destroyed");
+
+            previewSurface.release();
+            previewSurface = null;
         }
     }
 
-    private class CaptureStateCallback extends CameraCaptureSession.StateCallback {
+    private class CameraStateCallback extends CameraDevice.StateCallback {
+        @Override
+        public void onOpened(@NonNull CameraDevice camera) {
+            Log.i(TAG, "activeCamera opened");
+            activeCamera = camera;
+
+            try {
+                buildRequests();
+
+                Log.i(TAG, "creating capture session");
+                activeCamera.createCaptureSession(Arrays.asList(previewSurface, processSurface),
+                        sessionStateCallback, callbackHandler);
+                // result will be in SessionStateCallback#onConfigured(CameraCaptureSession) or
+                // SessionStateCallback#onConfigureFailed(CameraCapture Session)
+            } catch (CameraAccessException e) {
+                e.printStackTrace();
+            }
+        }
+
+        @Override
+        public void onDisconnected(@NonNull CameraDevice camera) {
+            Log.i(TAG, "disconnected");
+
+            if (activeCamera != null) {
+                activeCamera.close();
+                activeCamera = null;
+            }
+        }
+
+        @Override
+        public void onError(@NonNull CameraDevice camera, int error) {
+            Log.i(TAG, "error");
+        }
+    }
+
+    private class SessionStateCallback extends CameraCaptureSession.StateCallback {
 
         @Override
         public void onConfigured(@NonNull CameraCaptureSession session) {
@@ -326,72 +449,72 @@ public class Camera2Wrapper extends CameraDevice.StateCallback implements Camera
         }
     }
 
-    private class CameraCaptureCallback extends CameraCaptureSession.CaptureCallback {
+    private class SessionCaptureCallback extends CameraCaptureSession.CaptureCallback {
 
         private boolean active;
         private final int id;
-        private final CameraWrapper.Callback callback;
+        private int logLevel;
+        private final SnapshotCallback snapshotCallback;
 
-        CameraCaptureCallback(int id, CameraWrapper.Callback callback) {
+        SessionCaptureCallback(int id, SnapshotCallback snapshotCallback) {
             active = false;
             this.id = id;
-            this.callback = callback;
+            this.snapshotCallback = snapshotCallback;
         }
 
         boolean getActive() {
             return active;
         }
 
+        void setLogLevel(int logLevel) {
+            this.logLevel = logLevel;
+        }
+
         // ============================= CameraCaptureSession.CaptureCallback
 
         @Override
         public void onCaptureStarted(@NonNull CameraCaptureSession session, @NonNull CaptureRequest request, long timestamp, long frameNumber) {
-            Log.i(TAG, "capture("+id+") started");
+            Log.println(logLevel, TAG, "capture("+id+") started");
             active = true;
         }
 
         @Override
         public void onCaptureProgressed(@NonNull CameraCaptureSession session, @NonNull CaptureRequest request, @NonNull CaptureResult partialResult) {
-            Log.i(TAG, "capture("+id+") progressed");
+            Log.println(logLevel, TAG, "capture("+id+") progressed");
             // middle of a capture
         }
 
         @Override
         public void onCaptureCompleted(@NonNull CameraCaptureSession session, @NonNull CaptureRequest request, @NonNull TotalCaptureResult result) {
-            Log.i(TAG, "capture("+id+") completed");
+            Log.println(logLevel, TAG, "capture("+id+") completed");
             // a single capture has completed. if this is a repeating request, there could be more
             // captures coming. #onCaptureSequenceCompleted is called when it's completely done.
-            if (callback != null) {
-                if (lastImage != null) {
-                    lastImage.close();
-                }
-                lastImage = imageReader.acquireLatestImage();
-
-                callback.onImageCaptured(null);
+            if (snapshotCallback != null) {
+                snapshotCallback.onImageCaptured();
             }
         }
 
         @Override
         public void onCaptureFailed(@NonNull CameraCaptureSession session, @NonNull CaptureRequest request, @NonNull CaptureFailure failure) {
-            Log.i(TAG, "capture("+id+") failed");
+            Log.println(logLevel, TAG, "capture("+id+") failed");
             active = false;
         }
 
         @Override
         public void onCaptureSequenceCompleted(@NonNull CameraCaptureSession session, int sequenceId, long frameNumber) {
-            Log.i(TAG, "capture("+id+") sequence completed");
+            Log.println(logLevel, TAG, "capture("+id+") sequence completed");
             active = false;
         }
 
         @Override
         public void onCaptureSequenceAborted(@NonNull CameraCaptureSession session, int sequenceId) {
-            Log.i(TAG, "capture("+id+") sequence aborted");
+            Log.println(logLevel, TAG, "capture("+id+") sequence aborted");
             active = false;
         }
 
         @Override
         public void onCaptureBufferLost(@NonNull CameraCaptureSession session, @NonNull CaptureRequest request, @NonNull Surface target, long frameNumber) {
-            Log.i(TAG, "capture("+id+") buffer lost");
+            Log.println(logLevel, TAG, "capture("+id+") buffer lost");
             // doesn't mean the whole capture failed -> capturing is still occurring
         }
     }
