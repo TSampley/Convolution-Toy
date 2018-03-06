@@ -29,14 +29,6 @@ public interface CameraWrapper {
     void open(int id) throws Exception;
 
     /**
-     * Reports whether or not the camera is ready.
-     * @return Whether or not the camera has been set up to capture or preview.
-     * @see #preview()
-     * @see #capture()
-     */
-    boolean cameraReady();
-
-    /**
      * Starts previewing the device opened by {@link #open(int)}.
      * @throws Exception If something goes wrong, the exception will reveal all.
      */
@@ -60,6 +52,18 @@ public interface CameraWrapper {
      * @return The {@code SurfaceTexture} most recently created, or null if never created.
      */
     SurfaceTexture getSurfaceTexture();
+
+    /**
+     * Returns the output size width used to fill the surface texture object.
+     * @return The width of the {@link SurfaceTexture} returned by {@link #getSurfaceTexture()}.
+     */
+    int getTextureWidth();
+
+    /**
+     * Returns the output size height used to fill the surface texture object.
+     * @return The height of the {@link SurfaceTexture} returned by {@link #getSurfaceTexture()}.
+     */
+    int getTextureHeight();
 
     /**
      * Closes the most recently opened device camera.

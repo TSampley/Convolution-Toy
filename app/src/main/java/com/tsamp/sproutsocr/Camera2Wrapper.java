@@ -92,6 +92,7 @@ public class Camera2Wrapper implements CameraWrapper {
     private CameraCaptureSession captureSession;
 
     private SurfaceTexture surfaceTexture;
+    private Size surfaceTextureSize;
     private final CameraStateCallback cameraStateCallback;
     private final SessionStateCallback sessionStateCallback;
     private final SessionCaptureCallback previewCaptureCallback;
@@ -112,6 +113,7 @@ public class Camera2Wrapper implements CameraWrapper {
         singleRequest = null;
 
         surfaceTexture = null;
+        surfaceTextureSize = null;
         cameraStateCallback = new CameraStateCallback();
         sessionStateCallback = new SessionStateCallback();
         previewCaptureCallback = new SessionCaptureCallback(0, null);
@@ -219,8 +221,10 @@ public class Camera2Wrapper implements CameraWrapper {
                 if (streamConfigurationMap != null) {
                     Size[] sizes = streamConfigurationMap.getOutputSizes(ImageFormat.YUV_420_888);
                     if (sizes != null) {
-                        Size largest = sizes[0];
-                        surfaceTexture.setDefaultBufferSize(largest.getWidth(), largest.getHeight());
+                        surfaceTextureSize = sizes[0];
+                        surfaceTexture.setDefaultBufferSize(
+                                surfaceTextureSize.getWidth(),
+                                surfaceTextureSize.getHeight());
                     }
                 }
             } catch (CameraAccessException e) {
@@ -277,11 +281,6 @@ public class Camera2Wrapper implements CameraWrapper {
     }
 
     @Override
-    public boolean cameraReady() {
-        return captureSession != null && previewRequest != null && singleRequest != null;
-    }
-
-    @Override
     public void preview() throws Exception {
         Log.i(TAG, "session preview request");
         captureSession.setRepeatingRequest(previewRequest, previewCaptureCallback, cameraHandler);
@@ -304,6 +303,16 @@ public class Camera2Wrapper implements CameraWrapper {
     @Override
     public SurfaceTexture getSurfaceTexture() {
         return surfaceTexture;
+    }
+
+    @Override
+    public int getTextureWidth() {
+        return surfaceTextureSize == null ? 0 : surfaceTextureSize.getWidth();
+    }
+
+    @Override
+    public int getTextureHeight() {
+        return surfaceTextureSize == null ? 0 : surfaceTextureSize.getHeight();
     }
 
     @Override

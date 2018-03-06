@@ -27,8 +27,6 @@ public class LegacyCameraWrapper implements CameraWrapper {
 
     private final SnapshotCallback snapshotCallback;
 
-    private final Handler cameraHandler;
-
     LegacyCameraWrapper(@NonNull SurfaceView view, @NonNull Handler cameraHandler,
                         @NonNull SnapshotCallback snapshotCallback) {
         camera = null;
@@ -40,8 +38,6 @@ public class LegacyCameraWrapper implements CameraWrapper {
         postCallback = null;
 
         this.snapshotCallback = snapshotCallback;
-
-        this.cameraHandler = cameraHandler;
 
         view.getHolder().addCallback(new SurfaceCallback());
     }
@@ -99,11 +95,6 @@ public class LegacyCameraWrapper implements CameraWrapper {
     }
 
     @Override
-    public boolean cameraReady() {
-        return shutterCallback != null;
-    }
-
-    @Override
     public synchronized void preview() throws Exception {
         camera.startPreview();
         previewing = true;
@@ -122,6 +113,16 @@ public class LegacyCameraWrapper implements CameraWrapper {
     @Override
     public SurfaceTexture getSurfaceTexture() {
         return null;
+    }
+
+    @Override
+    public int getTextureWidth() {
+        return 0;
+    }
+
+    @Override
+    public int getTextureHeight() {
+        return 0;
     }
 
     @Override

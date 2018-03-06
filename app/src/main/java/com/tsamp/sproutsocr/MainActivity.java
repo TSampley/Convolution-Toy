@@ -83,7 +83,7 @@ public class MainActivity extends AppCompatActivity {
 
     // ============================= Hooks
 
-    public void onCapture(View sender) {
+    public void onCaptureClicked(View sender) {
         try {
             if (cameraThread.camera.previewing()) {    // capture photo
                 Log.i(TAG, "SNAPSHOT REQUESTED");
@@ -100,7 +100,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    public void onProcess(View sender) {
+    public void onProcessClicked(View sender) {
         glSurfaceView.requestRender();
     }
 
@@ -290,9 +290,11 @@ public class MainActivity extends AppCompatActivity {
         private int positionIndex;
         private int textureIndex;
         private int textureCoordIndex;
+        private int radiusIndex;
 
         private int textureHandle;
-        private int programHandle;
+        private int displayProgram;
+        private int edgeProgram;
 
         // "geometry" info
         private final int vertexCount = 4;
@@ -311,7 +313,7 @@ public class MainActivity extends AppCompatActivity {
         private int renderStep;
 
         GLRenderer() {
-            // positionIndex, textureIndex, textureCoordIndex, textureHandle, programHandle
+            // positionIndex, textureIndex, textureCoordIndex, textureHandle, displayProgram
             // will be determined later
 
             float left = -1;
@@ -390,18 +392,22 @@ public class MainActivity extends AppCompatActivity {
             Log.i(TAG, "renderer surface created");
 
             // retrieve code from files
-            String vertCode = readRawResource(getApplicationContext(), R.raw.vert_shader);
-            String fragCode = readRawResource(getApplicationContext(), R.raw.frag_shader);
+            String vertCode = readRawResource(getApplicationContext(), R.raw.display_vert);
+            String displayFragCode = readRawResource(getApplicationContext(), R.raw.display_frag);
+            String edgesFragCode = readRawResource(getApplicationContext(), R.raw.edges_frag);
             // compile shaders
             int vertShaderHandle = compileShader(GLES20.GL_VERTEX_SHADER, vertCode);
-            int fragShaderHandle = compileShader(GLES20.GL_FRAGMENT_SHADER, fragCode);
+            int fragShaderHandle = compileShader(GLES20.GL_FRAGMENT_SHADER, displayFragCode);
+            int edgesFragHandle = compileShader(GLES20.GL_FRAGMENT_SHADER, edgesFragCode);
             // link program
-            programHandle = compileProgram(vertShaderHandle, fragShaderHandle);
+            displayProgram = compileProgram(vertShaderHandle, fragShaderHandle);
+            edgeProgram = compileProgram(vertShaderHandle, edgesFragHandle);
 
             // retrieve program attribute and uniform locations
-            positionIndex = GLES20.glGetAttribLocation(programHandle, "a_position");
-            textureIndex = GLES20.glGetUniformLocation(programHandle, "u_texture");
-            textureCoordIndex = GLES20.glGetAttribLocation(programHandle, "a_texCoord");
+            positionIndex = GLES20.glGetAttribLocation(displayProgram, "a_position");
+            textureIndex = GLES20.glGetUniformLocation(displayProgram, "u_texture");
+            textureCoordIndex = GLES20.glGetAttribLocation(displayProgram, "a_texCoord");
+            radiusIndex = GLES20.glGetUniformLocation(edgeProgram, "u_radius");
 
             textureHandle = cameraThread.camera.createSurfaceTexture(0);
 
@@ -429,31 +435,41 @@ public class MainActivity extends AppCompatActivity {
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
 
             if (textureHandle >= 0) {
-                switch (renderStep) {
-                    case STEP_DISPLAY:
-                    case STEP_OUTLINE:
-                        // let's begin
-                        GLES20.glUseProgram(programHandle);
+                int program = renderStep == STEP_DISPLAY ? displayProgram : edgeProgram;
+                // let's begin
+                GLES20.glUseProgram(program);
 
-                        rectVertices.position(vertexOffset);
-                        GLES20.glVertexAttribPointer(positionIndex, vertexSize, GLES20.GL_FLOAT, false, stride, rectVertices);
-                        GLES20.glEnableVertexAttribArray(positionIndex);
+                rectVertices.position(vertexOffset);
+                GLES20.glVertexAttribPointer(positionIndex, vertexSize, GLES20.GL_FLOAT,
+                        false, stride, rectVertices);
+                GLES20.glEnableVertexAttribArray(positionIndex);
 
-                        rectVertices.position(texOffset);
-                        GLES20.glVertexAttribPointer(textureCoordIndex, texSize, GLES20.GL_FLOAT, false, stride, rectVertices);
-                        GLES20.glEnableVertexAttribArray(textureCoordIndex);
+                rectVertices.position(texOffset);
+                GLES20.glVertexAttribPointer(textureCoordIndex, texSize, GLES20.GL_FLOAT,
+                        false, stride, rectVertices);
+                GLES20.glEnableVertexAttribArray(textureCoordIndex);
 
-                        // set active texture unit
-                        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
-                        // update texture to most recent image. implicitly binds to GL_TEXTURE_EXTERNAL_OES
-                        cameraThread.camera.getSurfaceTexture().updateTexImage();
-                        // tell sampler identified by `textureIndex` to use texture unit 0
-                        GLES20.glUniform1i(textureIndex, 0);
-
-                        // run program
-                        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
-                        break;
+                if (renderStep == STEP_OUTLINE) {
+                    float rx = 1.0f / cameraThread.camera.getTextureWidth();
+                    float ry = 1.0f / cameraThread.camera.getTextureHeight();
+                    Log.i(TAG, "radius used [" + rx + ", " + ry + "]");
+                    GLES20.glUniform2f(radiusIndex, rx, ry);
                 }
+
+                // set active texture unit
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+                // update texture to most recent image. implicitly binds to GL_TEXTURE_EXTERNAL_OES
+                cameraThread.camera.getSurfaceTexture().updateTexImage();
+                // tell sampler identified by `textureIndex` to use texture unit 0
+                GLES20.glUniform1i(textureIndex, 0);
+
+                // run program
+                GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+
+                runOnUiThread(() -> Toast.makeText(getApplicationContext(),
+                        "ran (" + renderStep + ") program",
+                        Toast.LENGTH_SHORT).show());
+                renderStep = (renderStep + 1) % 2;
             } else {
                 Log.i(TAG, "GLRenderer does not have textureHandle yet");
             }
