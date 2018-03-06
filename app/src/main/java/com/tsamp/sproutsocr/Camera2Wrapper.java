@@ -14,11 +14,9 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
-import android.media.Image;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES20;
 import android.os.Handler;
-import android.os.Looper;
 import android.support.annotation.NonNull;
 import android.util.Log;
 import android.util.Range;
@@ -99,10 +97,10 @@ public class Camera2Wrapper implements CameraWrapper {
     private final SessionCaptureCallback previewCaptureCallback;
     private final SessionCaptureCallback snapshotCaptureCallback;
 
-    private final Handler callbackHandler;
+    private final Handler cameraHandler;
 
     Camera2Wrapper(@NonNull Context context, @NonNull SurfaceView surfaceView,
-                   @NonNull SnapshotCallback snapshotCallback) {
+                   @NonNull Handler cameraHandler, @NonNull SnapshotCallback snapshotCallback) {
         manager = (CameraManager)context.getSystemService(Context.CAMERA_SERVICE);
         characteristics = null;
         streamConfigurationMap = null;
@@ -121,9 +119,19 @@ public class Camera2Wrapper implements CameraWrapper {
         snapshotCaptureCallback = new SessionCaptureCallback(1, snapshotCallback);
         snapshotCaptureCallback.setLogLevel(Log.DEBUG);
 
-        callbackHandler = new Handler(Looper.getMainLooper());
+        this.cameraHandler = cameraHandler;
 
         surfaceView.getHolder().addCallback(new SurfaceCallback());
+    }
+
+    private void checkForOpen() {
+        if (canOpen()) {
+            try {
+                open(0);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
     }
 
     private void buildRequests() throws CameraAccessException {
@@ -185,10 +193,11 @@ public class Camera2Wrapper implements CameraWrapper {
     @Override
     public int createSurfaceTexture(int imageUnit) {
         Log.i(TAG, "creating surface texture in context of " + Thread.currentThread());
+        // generate texture object
         int[] texHandles = new int[1];
         GLES20.glGenTextures(1, texHandles, 0);
         int textureHandle = texHandles[0];
-        if (textureHandle >= 0) {
+        if (textureHandle > 0) { // 0 is reserved, so it will never be generated
             // set texture unit
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0 + imageUnit);
             // bind texture object to external target
@@ -207,10 +216,12 @@ public class Camera2Wrapper implements CameraWrapper {
                 CameraCharacteristics characteristics = manager.getCameraCharacteristics(stringId);
                 StreamConfigurationMap streamConfigurationMap =
                         characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-                Size[] sizes = streamConfigurationMap.getOutputSizes(ImageFormat.YUV_420_888);
-                if (sizes != null) {
-                    Size largest = sizes[0];
-                    surfaceTexture.setDefaultBufferSize(largest.getWidth(), largest.getHeight());
+                if (streamConfigurationMap != null) {
+                    Size[] sizes = streamConfigurationMap.getOutputSizes(ImageFormat.YUV_420_888);
+                    if (sizes != null) {
+                        Size largest = sizes[0];
+                        surfaceTexture.setDefaultBufferSize(largest.getWidth(), largest.getHeight());
+                    }
                 }
             } catch (CameraAccessException e) {
                 e.printStackTrace();
@@ -220,6 +231,11 @@ public class Camera2Wrapper implements CameraWrapper {
         } else {
             throw new IllegalStateException("Unable to acquire texture handle.");
         }
+
+        // #createSurfaceTexture will only work if called from a Thread with a GL context, so this
+        // has to be delegated to our camera handler
+        cameraHandler.post(this::checkForOpen);
+
         return textureHandle;
     }
 
@@ -248,25 +264,11 @@ public class Camera2Wrapper implements CameraWrapper {
             String stringId = manager.getCameraIdList()[id];
             Log.i(TAG, "requested open(" + id + ":" + stringId + ")");
 
-            // processSurface can be created as soon as we know which Camera is requested
-//            Rect rect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
-//            Size size = characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE);
-//            if (rect == null) {
-//                rect = new Rect(0, 0, 0, 0);
-//            }
-//            if (size == null) {
-//                size = new Size(0, 0);
-//            }
-//            imageReader = ImageReader.newInstance(rect.width(), rect.height(),
-//                    ImageFormat.YUV_420_888, 2);
-//            Log.i(TAG, "ACTIVE PIXELS " + rect.toShortString() + " within " + size.toString());
             characteristics = manager.getCameraCharacteristics(stringId);
             streamConfigurationMap =
                     characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
 
-//            Size size = streamConfigurationMap.getOutputSizes(ImageFormat.YUV_420_888)[0];
-//            surfaceCallback.setFixedSize(size);
-            manager.openCamera(stringId, cameraStateCallback, callbackHandler);
+            manager.openCamera(stringId, cameraStateCallback, cameraHandler);
             // result will be found in CameraStateCallback#onOpened(CameraDevice)
             Log.i(TAG, "opening activeCamera");
         } catch (SecurityException e) {
@@ -282,7 +284,7 @@ public class Camera2Wrapper implements CameraWrapper {
     @Override
     public void preview() throws Exception {
         Log.i(TAG, "session preview request");
-        captureSession.setRepeatingRequest(previewRequest, previewCaptureCallback, callbackHandler);
+        captureSession.setRepeatingRequest(previewRequest, previewCaptureCallback, cameraHandler);
         // results will appear in methods of SessionCaptureCallback
     }
 
@@ -295,7 +297,7 @@ public class Camera2Wrapper implements CameraWrapper {
     public void capture() throws Exception {
         Log.i(TAG, "capture requested");
         captureSession.stopRepeating();
-        captureSession.capture(singleRequest, snapshotCaptureCallback, callbackHandler);
+        captureSession.capture(singleRequest, snapshotCaptureCallback, cameraHandler);
         // results will appear in methods of SessionCaptureCallback
     }
 
@@ -342,6 +344,7 @@ public class Camera2Wrapper implements CameraWrapper {
             // hold on to Callback instances in case this Wrapper gets re-opened
 
             // results will appear in methods of SessionStateCallback
+            snapshotCaptureCallback.snapshotCallback.onCameraClosed();
         }
     }
 
@@ -351,6 +354,7 @@ public class Camera2Wrapper implements CameraWrapper {
         public void surfaceCreated(SurfaceHolder holder) {
             Log.i(TAG, "surface created");
             previewSurface = holder.getSurface();
+            checkForOpen();
         }
 
         @Override
@@ -372,13 +376,14 @@ public class Camera2Wrapper implements CameraWrapper {
         public void onOpened(@NonNull CameraDevice camera) {
             Log.i(TAG, "activeCamera opened");
             activeCamera = camera;
+            snapshotCaptureCallback.snapshotCallback.onCameraOpened();
 
             try {
                 buildRequests();
 
                 Log.i(TAG, "creating capture session");
                 activeCamera.createCaptureSession(Arrays.asList(previewSurface, processSurface),
-                        sessionStateCallback, callbackHandler);
+                        sessionStateCallback, cameraHandler);
                 // result will be in SessionStateCallback#onConfigured(CameraCaptureSession) or
                 // SessionStateCallback#onConfigureFailed(CameraCapture Session)
             } catch (CameraAccessException e) {
@@ -410,9 +415,9 @@ public class Camera2Wrapper implements CameraWrapper {
             captureSession = session;
 
             try {
-                Log.i(TAG, "request capture");
+                Log.i(TAG, "request preview");
                 preview();
-                Log.i(TAG, "capture requested");
+                Log.i(TAG, "preview requested");
             } catch (Exception e) {
                 e.printStackTrace();
             }

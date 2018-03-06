@@ -20,6 +20,7 @@ import android.view.SurfaceView;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -56,8 +57,7 @@ public class MainActivity extends AppCompatActivity {
     private Button buttonCapture;
     private Button buttonProcess;
 
-    private CameraHandler cameraHandler;
-    private Thread cameraThread;
+    private CameraThread cameraThread;
 
     public MainActivity() {
         super();
@@ -85,15 +85,15 @@ public class MainActivity extends AppCompatActivity {
 
     public void onCapture(View sender) {
         try {
-            if (cameraHandler.camera.previewing()) {
+            if (cameraThread.camera.previewing()) {    // capture photo
                 Log.i(TAG, "SNAPSHOT REQUESTED");
-                cameraHandler.camera.capture();
-            } else {
+                cameraThread.camera.capture();
+            } else {                                    // resume preview
                 Log.i(TAG, "CONTINUE PREVIEW");
                 buttonCapture.setText(R.string.capture_pic);
                 buttonProcess.setEnabled(false);
 
-                cameraHandler.camera.preview();
+                cameraThread.camera.preview();
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -101,7 +101,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public void onProcess(View sender) {
-
+        glSurfaceView.requestRender();
     }
 
     // ============================= FragmentActivity
@@ -130,12 +130,13 @@ public class MainActivity extends AppCompatActivity {
         textView = findViewById(R.id.textView);
         buttonCapture = findViewById(R.id.button_capture);
         buttonProcess = findViewById(R.id.button_process);
+        buttonCapture.setEnabled(false);
 
-        cameraHandler = new CameraHandler();
-        cameraThread = new Thread(cameraHandler);
-
-        glSurfaceView.setEGLContextClientVersion(2);
+        cameraThread = new CameraThread();
         GLRenderer renderer = new GLRenderer();
+
+        // setup the GLSurfaceView to start rendering
+        glSurfaceView.setEGLContextClientVersion(2);
         glSurfaceView.setEGLConfigChooser(false);
         glSurfaceView.setRenderer(renderer);
         glSurfaceView.setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY);
@@ -149,13 +150,19 @@ public class MainActivity extends AppCompatActivity {
         int grant = PermissionChecker.checkSelfPermission(getApplicationContext(), Manifest.permission.CAMERA);
         switch (grant) {
             case PermissionChecker.PERMISSION_GRANTED: // start camera stuffs
-                cameraThread.start();
+                if (!cameraThread.isAlive()) {
+                    cameraThread.start();
+                }
                 break;
             case PermissionChecker.PERMISSION_DENIED_APP_OP: // user has disabled permission -> request
             case PermissionChecker.PERMISSION_DENIED: // permission not yet granted -> request
                 ActivityCompat.requestPermissions(this,
                         new String[]{Manifest.permission.CAMERA}, PERMISSION_REQUEST_CAMERA);
                 break;
+        }
+
+        if (!cameraThread.isAlive()) {
+            cameraThread.start();
         }
     }
 
@@ -171,7 +178,7 @@ public class MainActivity extends AppCompatActivity {
         glSurfaceView.onPause();
 
         try {
-            cameraHandler.camera.close();
+            cameraThread.camera.close();
         } catch (Exception e) {e.printStackTrace();}
     }
 
@@ -179,13 +186,10 @@ public class MainActivity extends AppCompatActivity {
     protected void onStop() {
         super.onStop();
 
-        cameraHandler.handler.post(new Runnable() {
-            @Override
-            public void run() {
-                Looper looper = Looper.myLooper();
-                if (looper != null) {
-                    looper.quit();
-                }
+        cameraThread.handler.post(() -> {
+            Looper looper = Looper.myLooper();
+            if (looper != null) {
+                looper.quit();
             }
         });
     }
@@ -199,7 +203,9 @@ public class MainActivity extends AppCompatActivity {
                 }
                 if (grantResults[0] == PermissionChecker.PERMISSION_GRANTED) {
                     Log.i(TAG, "permission granted ");
-                    cameraThread.start();
+                    if (!cameraThread.isAlive()) {
+                        cameraThread.start();
+                    }
                 } else {
                     finish();
                 }
@@ -209,21 +215,17 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private class CameraHandler implements Runnable, CameraWrapper.SnapshotCallback {
+    private class CameraThread extends Thread implements CameraWrapper.SnapshotCallback {
 
+        private static final String TAG = "CameraThread";
         CameraWrapper camera;
         private Handler handler;
 
-        CameraHandler() {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                camera = new Camera2Wrapper(getApplicationContext(), surfaceView, this);
-            } else {
-                camera = new LegacyCameraWrapper(surfaceView, this);
-            }
-            handler = null;
+        CameraThread() {
+            super("Camera Thread");
         }
 
-        // ============================= Runnable
+        // ============================= Thread
 
         @Override
         public void run() {
@@ -231,35 +233,11 @@ public class MainActivity extends AppCompatActivity {
             Looper.prepare();
             handler = new Handler();
 
-            try {
-                // CameraWrapper#createSurfaceTexture(int) is invoked by the GLSurfaceView at
-                // some point.
-
-                Log.i(TAG, "CameraHandler waiting for camera setup");
-                while (!camera.canOpen()) {
-                    Thread.sleep(10);
-                }
-
-                Log.i(TAG, "CameraHandler opening");
-                camera.open(0);
-
-                Log.i(TAG, "CameraHandler waiting for camera session");
-                while (!camera.cameraReady()) {
-                    Thread.sleep(10);
-                }
-                // camera ready
-                Log.i(TAG, "ready to preview");
-
-                camera.preview();
-
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        textView.setVisibility(View.INVISIBLE);
-                    }
-                });
-            } catch (Exception e) {
-                e.printStackTrace();
+            // each constructor should use the handler they are passed to seed the loop
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                camera = new Camera2Wrapper(getApplicationContext(), surfaceView, handler, this);
+            } else {
+                camera = new LegacyCameraWrapper(surfaceView, handler, this);
             }
 
             // after initial camera setup, dedicate this Thread to receiving messages.
@@ -269,16 +247,42 @@ public class MainActivity extends AppCompatActivity {
         // ============================= CameraWrapper.SnapshotCallback
 
         @Override
+        public void onCameraOpened() {
+            runOnUiThread(() -> {
+                buttonCapture.setEnabled(true);
+                textView.setVisibility(View.INVISIBLE);
+            });
+        }
+
+        @Override
         public void onImageCaptured() {
             Log.i(TAG, "onImageCaptured");
 
-            buttonCapture.setText(R.string.retake_pic);
-            buttonProcess.setEnabled(true);
-            glSurfaceView.requestRender();
+            runOnUiThread(() -> {
+                buttonCapture.setText(R.string.retake_pic);
+                buttonProcess.setEnabled(true);
+                surfaceView.setVisibility(View.INVISIBLE);
+                glSurfaceView.requestRender();
+            });
+            Toast msg = Toast.makeText(getApplicationContext(),
+                    "Captured", Toast.LENGTH_SHORT);
+            msg.show();
+        }
+
+        @Override
+        public void onCameraClosed() {
+            runOnUiThread(() -> {
+                buttonCapture.setText(R.string.capture_pic);
+                buttonCapture.setEnabled(false);
+                textView.setVisibility(View.VISIBLE);
+            });
         }
     }
 
     private class GLRenderer implements GLSurfaceView.Renderer {
+
+        private static final int STEP_DISPLAY = 0;
+        private static final int STEP_OUTLINE = 1;
 
         private final int BYTES_PER_FLOAT = 4;
 
@@ -302,6 +306,9 @@ public class MainActivity extends AppCompatActivity {
 
         private final int stride = 0;
         private final FloatBuffer rectVertices;
+
+        // process steps
+        private int renderStep;
 
         GLRenderer() {
             // positionIndex, textureIndex, textureCoordIndex, textureHandle, programHandle
@@ -328,6 +335,8 @@ public class MainActivity extends AppCompatActivity {
                     .order(ByteOrder.nativeOrder()).asFloatBuffer();
             rectVertices.put(vertices, 0, vertexCount*vertexSize);
             rectVertices.put(texCoords, 0, vertexCount*texSize);
+
+            renderStep = STEP_DISPLAY;
         }
 
         private int compileShader(int shaderType, String source) {
@@ -374,6 +383,8 @@ public class MainActivity extends AppCompatActivity {
             return programHandle;
         }
 
+        // ============================= GLSurfaceView.Renderer
+
         @Override
         public void onSurfaceCreated(GL10 gl, EGLConfig config) {
             Log.i(TAG, "renderer surface created");
@@ -392,7 +403,7 @@ public class MainActivity extends AppCompatActivity {
             textureIndex = GLES20.glGetUniformLocation(programHandle, "u_texture");
             textureCoordIndex = GLES20.glGetAttribLocation(programHandle, "a_texCoord");
 
-            textureHandle = cameraHandler.camera.createSurfaceTexture(0);
+            textureHandle = cameraThread.camera.createSurfaceTexture(0);
 
             int[] viewport = new int[4];
             GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, viewport, 0);
@@ -418,31 +429,37 @@ public class MainActivity extends AppCompatActivity {
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
 
             if (textureHandle >= 0) {
-                // let's begin
-                GLES20.glUseProgram(programHandle);
+                switch (renderStep) {
+                    case STEP_DISPLAY:
+                    case STEP_OUTLINE:
+                        // let's begin
+                        GLES20.glUseProgram(programHandle);
 
-                rectVertices.position(vertexOffset);
-                GLES20.glVertexAttribPointer(positionIndex, vertexSize, GLES20.GL_FLOAT, false, stride, rectVertices);
-                GLES20.glEnableVertexAttribArray(positionIndex);
+                        rectVertices.position(vertexOffset);
+                        GLES20.glVertexAttribPointer(positionIndex, vertexSize, GLES20.GL_FLOAT, false, stride, rectVertices);
+                        GLES20.glEnableVertexAttribArray(positionIndex);
 
-                rectVertices.position(texOffset);
-                GLES20.glVertexAttribPointer(textureCoordIndex, texSize, GLES20.GL_FLOAT, false, stride, rectVertices);
-                GLES20.glEnableVertexAttribArray(textureCoordIndex);
+                        rectVertices.position(texOffset);
+                        GLES20.glVertexAttribPointer(textureCoordIndex, texSize, GLES20.GL_FLOAT, false, stride, rectVertices);
+                        GLES20.glEnableVertexAttribArray(textureCoordIndex);
 
-                // set active texture unit
-                GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
-                // update texture to most recent image. implicitly binds to GL_TEXTURE_EXTERNAL_OES
-                cameraHandler.camera.getSurfaceTexture().updateTexImage();
-                // tell sampler identified by `textureIndex` to use texture unit 0
-                GLES20.glUniform1i(textureIndex, 0);
+                        // set active texture unit
+                        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+                        // update texture to most recent image. implicitly binds to GL_TEXTURE_EXTERNAL_OES
+                        cameraThread.camera.getSurfaceTexture().updateTexImage();
+                        // tell sampler identified by `textureIndex` to use texture unit 0
+                        GLES20.glUniform1i(textureIndex, 0);
 
-                // run program
-                GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+                        // run program
+                        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+                        break;
+                }
             } else {
                 Log.i(TAG, "GLRenderer does not have textureHandle yet");
-
             }
         }
+
+        // ============================= Nested Classes
 
         private class GLESShaderAllocationException extends RuntimeException {}
 

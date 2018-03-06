@@ -2,6 +2,8 @@ package com.tsamp.sproutsocr;
 
 import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
+import android.os.Handler;
+import android.support.annotation.NonNull;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -25,7 +27,10 @@ public class LegacyCameraWrapper implements CameraWrapper {
 
     private final SnapshotCallback snapshotCallback;
 
-    LegacyCameraWrapper(SurfaceView view, SnapshotCallback snapshotCallback) {
+    private final Handler cameraHandler;
+
+    LegacyCameraWrapper(@NonNull SurfaceView view, @NonNull Handler cameraHandler,
+                        @NonNull SnapshotCallback snapshotCallback) {
         camera = null;
         surfaceHolder = null;
 
@@ -35,6 +40,8 @@ public class LegacyCameraWrapper implements CameraWrapper {
         postCallback = null;
 
         this.snapshotCallback = snapshotCallback;
+
+        this.cameraHandler = cameraHandler;
 
         view.getHolder().addCallback(new SurfaceCallback());
     }
