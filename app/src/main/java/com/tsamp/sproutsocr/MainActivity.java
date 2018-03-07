@@ -84,19 +84,19 @@ public class MainActivity extends AppCompatActivity {
     // ============================= Hooks
 
     public void onCaptureClicked(View sender) {
-        try {
-            if (cameraThread.camera.previewing()) {    // capture photo
-                Log.i(TAG, "SNAPSHOT REQUESTED");
+        if (cameraThread.camera.previewing()) {    // capture photo
+            Log.i(TAG, "SNAPSHOT REQUESTED");
+            try {
                 cameraThread.camera.capture();
-            } else {                                    // resume preview
-                Log.i(TAG, "CONTINUE PREVIEW");
-                buttonCapture.setText(R.string.capture_pic);
-                buttonProcess.setEnabled(false);
-
-                cameraThread.camera.preview();
+            } catch (Exception e) {
+                e.printStackTrace();
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+        } else {                                    // resume preview
+            Log.i(TAG, "CONTINUE PREVIEW");
+            buttonCapture.setText(R.string.capture_pic);
+            buttonProcess.setEnabled(false);
+
+            surfaceView.setVisibility(View.VISIBLE);
         }
     }
 
