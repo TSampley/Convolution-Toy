@@ -22,11 +22,13 @@ import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.tsamp.sproutsocr.renders.ClumpRender;
+import com.tsamp.sproutsocr.renders.DisplayRender;
+import com.tsamp.sproutsocr.renders.EdgeDetectRender;
+import com.tsamp.sproutsocr.renders.Render;
+
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.FloatBuffer;
 import java.nio.charset.Charset;
 
 import javax.microedition.khronos.egl.EGLConfig;
@@ -58,6 +60,7 @@ public class MainActivity extends AppCompatActivity {
     private Button buttonProcess;
 
     private CameraThread cameraThread;
+    private GLRenderer renderer;
 
     public MainActivity() {
         super();
@@ -86,6 +89,7 @@ public class MainActivity extends AppCompatActivity {
     public void onCaptureClicked(View sender) {
         if (cameraThread.camera.previewing()) {    // capture photo
             Log.i(TAG, "SNAPSHOT REQUESTED");
+            renderer.setRenderStep(0);
             try {
                 cameraThread.camera.capture();
             } catch (Exception e) {
@@ -101,7 +105,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public void onProcessClicked(View sender) {
+        renderer.setRenderStep(renderer.renderStep+1);
         glSurfaceView.requestRender();
+
+        Toast.makeText(getApplicationContext(),
+                "ran (" + renderer.renderStep + ") program",
+                Toast.LENGTH_SHORT).show();
     }
 
     // ============================= FragmentActivity
@@ -133,7 +142,7 @@ public class MainActivity extends AppCompatActivity {
         buttonCapture.setEnabled(false);
 
         cameraThread = new CameraThread();
-        GLRenderer renderer = new GLRenderer();
+        renderer = new GLRenderer();
 
         // setup the GLSurfaceView to start rendering
         glSurfaceView.setEGLContextClientVersion(2);
@@ -281,108 +290,26 @@ public class MainActivity extends AppCompatActivity {
 
     private class GLRenderer implements GLSurfaceView.Renderer {
 
-        private static final int STEP_DISPLAY = 0;
-        private static final int STEP_OUTLINE = 1;
+//        private static final int STEP_DISPLAY = 0;
+//        private static final int STEP_OUTLINE = 1;
 
-        private final int BYTES_PER_FLOAT = 4;
-
-        // render info
-        private int positionIndex;
-        private int textureIndex;
-        private int textureCoordIndex;
-        private int radiusIndex;
-
-        private int textureHandle;
-        private int displayProgram;
-        private int edgeProgram;
-
-        // "geometry" info
-        private final int vertexCount = 4;
-        float[] vertices;
-        private final int vertexOffset = 0;
-        private final int vertexSize = 2;
-
-        float[] texCoords;
-        private final int texOffset = vertexSize*vertexCount;
-        private final int texSize = 2;
-
-        private final int stride = 0;
-        private final FloatBuffer rectVertices;
-
-        // process steps
+        private Render[] programs;
         private int renderStep;
 
+        private int surfaceTextureHandle;
+        private Render.CompilationResources compilationResources;
+
         GLRenderer() {
-            // positionIndex, textureIndex, textureCoordIndex, textureHandle, displayProgram
-            // will be determined later
-
-            float left = -1;
-            float right = 1;
-            float top = 1;
-            float bottom = -1;
-            vertices = new float[]{
-                    left, top,
-                    right, top,
-                    left, bottom,
-                    right, bottom
+            programs = new Render[]{
+                    new DisplayRender(),
+                    new EdgeDetectRender(1),
+                    new ClumpRender(2)
             };
-            texCoords = new float[]{
-                    0, 0,
-                    1, 0,
-                    0, 1,
-                    1, 1
-            };
-            rectVertices = ByteBuffer.allocateDirect(
-                    vertexCount*(vertexSize + texSize)*BYTES_PER_FLOAT)
-                    .order(ByteOrder.nativeOrder()).asFloatBuffer();
-            rectVertices.put(vertices, 0, vertexCount*vertexSize);
-            rectVertices.put(texCoords, 0, vertexCount*texSize);
-
-            renderStep = STEP_DISPLAY;
+            renderStep = 0;
         }
 
-        private int compileShader(int shaderType, String source) {
-            int shaderHandle = GLES20.glCreateShader(shaderType);
-
-            if (shaderHandle == 0) {
-                throw new GLESShaderAllocationException();
-            } else {
-                GLES20.glShaderSource(shaderHandle, source);
-                GLES20.glCompileShader(shaderHandle);
-                int[] compileStatus = new int[1];
-                GLES20.glGetShaderiv(shaderHandle, GLES20.GL_COMPILE_STATUS, compileStatus, 0);
-
-                if (compileStatus[0] == 0) {
-                    String str = GLES20.glGetShaderInfoLog(shaderHandle);
-                    GLES20.glDeleteShader(shaderHandle);
-                    throw new GLESCompileException(shaderHandle, shaderType, str);
-                }
-            }
-
-            return shaderHandle;
-        }
-
-        private int compileProgram(int vertexShader, int fragmentShader) {
-            int programHandle = GLES20.glCreateProgram();
-
-            if (programHandle == 0) {
-                throw new GLESProgramAllocationException();
-            } else {
-                GLES20.glAttachShader(programHandle, vertexShader);
-                GLES20.glAttachShader(programHandle, fragmentShader);
-
-                GLES20.glLinkProgram(programHandle);
-                int[] linkStatus = new int[1];
-                GLES20.glGetProgramiv(programHandle, GLES20.GL_LINK_STATUS, linkStatus, 0);
-
-                if (linkStatus[0] == 0) {
-                    String str = GLES20.glGetProgramInfoLog(programHandle);
-                    GLES20.glDeleteProgram(programHandle);
-                    throw new GLESProgramLinkException(programHandle, vertexShader, fragmentShader, str);
-                }
-            }
-
-            return programHandle;
+        void setRenderStep(int renderStep) {
+            this.renderStep = renderStep % programs.length;
         }
 
         // ============================= GLSurfaceView.Renderer
@@ -390,32 +317,58 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onSurfaceCreated(GL10 gl, EGLConfig config) {
             Log.i(TAG, "renderer surface created");
+            int[] result = new int[1];
+            GLES20.glGetIntegerv(GLES20.GL_MAX_TEXTURE_IMAGE_UNITS, result, 0);
+            Log.i(TAG, "max units: " + result[0]);
 
-            // retrieve code from files
+            // SurfaceTexture that all Render objects can use if they choose
+            surfaceTextureHandle = cameraThread.camera.createSurfaceTexture(0);
+            // common shader that all Render objects can use if they choose
             String vertCode = readRawResource(getApplicationContext(), R.raw.display_vert);
-            String displayFragCode = readRawResource(getApplicationContext(), R.raw.display_frag);
-            String edgesFragCode = readRawResource(getApplicationContext(), R.raw.edges_frag);
-            // compile shaders
             int vertShaderHandle = compileShader(GLES20.GL_VERTEX_SHADER, vertCode);
-            int fragShaderHandle = compileShader(GLES20.GL_FRAGMENT_SHADER, displayFragCode);
-            int edgesFragHandle = compileShader(GLES20.GL_FRAGMENT_SHADER, edgesFragCode);
-            // link program
-            displayProgram = compileProgram(vertShaderHandle, fragShaderHandle);
-            edgeProgram = compileProgram(vertShaderHandle, edgesFragHandle);
 
-            // retrieve program attribute and uniform locations
-            positionIndex = GLES20.glGetAttribLocation(displayProgram, "a_position");
-            textureIndex = GLES20.glGetUniformLocation(displayProgram, "u_texture");
-            textureCoordIndex = GLES20.glGetAttribLocation(displayProgram, "a_texCoord");
-            radiusIndex = GLES20.glGetUniformLocation(edgeProgram, "u_radius");
+            compilationResources = new Render.CompilationResources() {
+                @Override
+                public int compileShader(int shaderType, int id) {
+                    return MainActivity.compileShader(shaderType,
+                            readRawResource(getApplicationContext(), id));
+                }
 
-            textureHandle = cameraThread.camera.createSurfaceTexture(0);
+                @Override
+                public int linkProgram(int vertShader, int fragShader) {
+                    return MainActivity.compileProgram(vertShader, fragShader);
+                }
 
-            int[] viewport = new int[4];
-            GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, viewport, 0);
-            int[] maxView = new int[2];
-            GLES20.glGetIntegerv(GLES20.GL_MAX_VIEWPORT_DIMS, maxView, 0);
+                @Override
+                public int getVertexShader() {
+                    return vertShaderHandle;
+                }
 
+                @Override
+                public int getTextureWidth() {
+                    return cameraThread.camera.getTextureWidth();
+                }
+
+                @Override
+                public int getTextureHeight() {
+                    return cameraThread.camera.getTextureHeight();
+                }
+
+                @Override
+                public int getOutputWidth() {
+                    return glSurfaceView.getWidth();
+                }
+
+                @Override
+                public int getOutputHeight() {
+                    return glSurfaceView.getHeight();
+                }
+            };
+            for (Render render : programs) {
+                render.compileAndLink(compilationResources);
+            }
+
+            // set the clear color
             GLES20.glClearColor(.5f, .5f, .5f, 1);
 //            GLES20.glDisable(GLES20.GL_CULL_FACE);
 //            GLES20.glCullFace(GLES20.GL_CCW);
@@ -424,76 +377,90 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onSurfaceChanged(GL10 gl, int width, int height) {
             Log.i(TAG, "renderer surface changed");
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
             GLES20.glViewport(0, 0, width, height);
+//            GLES20.glViewport(0, 0,
+//                    Math.max(width, cameraThread.camera.getTextureWidth()),
+//                    Math.max(height, cameraThread.camera.getTextureHeight()));
         }
 
         @Override
         public void onDrawFrame(GL10 gl) {
             Log.d(TAG, "onDrawFrame");
 
-            // pre-render cleanup
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
-
-            if (textureHandle >= 0) {
-                int program = renderStep == STEP_DISPLAY ? displayProgram : edgeProgram;
-                // let's begin
-                GLES20.glUseProgram(program);
-
-                rectVertices.position(vertexOffset);
-                GLES20.glVertexAttribPointer(positionIndex, vertexSize, GLES20.GL_FLOAT,
-                        false, stride, rectVertices);
-                GLES20.glEnableVertexAttribArray(positionIndex);
-
-                rectVertices.position(texOffset);
-                GLES20.glVertexAttribPointer(textureCoordIndex, texSize, GLES20.GL_FLOAT,
-                        false, stride, rectVertices);
-                GLES20.glEnableVertexAttribArray(textureCoordIndex);
-
-                if (renderStep == STEP_OUTLINE) {
-                    float rx = 1.0f / cameraThread.camera.getTextureWidth();
-                    float ry = 1.0f / cameraThread.camera.getTextureHeight();
-                    Log.i(TAG, "radius used [" + rx + ", " + ry + "]");
-                    GLES20.glUniform2f(radiusIndex, rx, ry);
-                }
-
+            if (surfaceTextureHandle > 0) { // only bother drawing if the surface texture is valid
                 // set active texture unit
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
                 // update texture to most recent image. implicitly binds to GL_TEXTURE_EXTERNAL_OES
                 cameraThread.camera.getSurfaceTexture().updateTexImage();
-                // tell sampler identified by `textureIndex` to use texture unit 0
-                GLES20.glUniform1i(textureIndex, 0);
 
-                // run program
-                GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
-
-                runOnUiThread(() -> Toast.makeText(getApplicationContext(),
-                        "ran (" + renderStep + ") program",
-                        Toast.LENGTH_SHORT).show());
-                renderStep = (renderStep + 1) % 2;
+                programs[renderStep].run(compilationResources);
             } else {
-                Log.i(TAG, "GLRenderer does not have textureHandle yet");
+                Log.i(TAG, "GLRenderer does not have surfaceTextureHandle yet");
+            }
+        }
+    }
+
+    public static int compileShader(int shaderType, String source) {
+        int shaderHandle = GLES20.glCreateShader(shaderType);
+
+        if (shaderHandle == 0) {
+            throw new GLESShaderAllocationException();
+        } else {
+            GLES20.glShaderSource(shaderHandle, source);
+            GLES20.glCompileShader(shaderHandle);
+            int[] compileStatus = new int[1];
+            GLES20.glGetShaderiv(shaderHandle, GLES20.GL_COMPILE_STATUS, compileStatus, 0);
+
+            if (compileStatus[0] == 0) {
+                String str = GLES20.glGetShaderInfoLog(shaderHandle);
+                GLES20.glDeleteShader(shaderHandle);
+                throw new GLESCompileException(shaderHandle, shaderType, str);
             }
         }
 
-        // ============================= Nested Classes
+        return shaderHandle;
+    }
 
-        private class GLESShaderAllocationException extends RuntimeException {}
+    public static int compileProgram(int vertexShader, int fragmentShader) {
+        int programHandle = GLES20.glCreateProgram();
 
-        private class GLESCompileException extends RuntimeException {
-            GLESCompileException(int shaderHandle, int shaderType, String infoLog) {
-                super("shader [" + shaderHandle + ", " +shaderType+"] encountered problem: " +
-                        infoLog);
+        if (programHandle == 0) {
+            throw new GLESProgramAllocationException();
+        } else {
+            GLES20.glAttachShader(programHandle, vertexShader);
+            GLES20.glAttachShader(programHandle, fragmentShader);
+
+            GLES20.glLinkProgram(programHandle);
+            int[] linkStatus = new int[1];
+            GLES20.glGetProgramiv(programHandle, GLES20.GL_LINK_STATUS, linkStatus, 0);
+
+            if (linkStatus[0] == 0) {
+                String str = GLES20.glGetProgramInfoLog(programHandle);
+                GLES20.glDeleteProgram(programHandle);
+                throw new GLESProgramLinkException(programHandle, vertexShader, fragmentShader, str);
             }
         }
 
-        private class GLESProgramAllocationException extends RuntimeException {}
+        return programHandle;
+    }
 
-        private class GLESProgramLinkException extends RuntimeException {
-            GLESProgramLinkException(int programHandle, int vertexHandle, int fragmentHandle,
-                                     String infoLog) {
-                super("program [" + programHandle + ": " + vertexHandle + " + " + fragmentHandle +
-                        "] encountered problem: " + infoLog);
-            }
+    private static class GLESShaderAllocationException extends RuntimeException {}
+
+    private static class GLESCompileException extends RuntimeException {
+        GLESCompileException(int shaderHandle, int shaderType, String infoLog) {
+            super("shader [" + shaderHandle + ", " +shaderType+"] encountered problem: " +
+                    infoLog);
+        }
+    }
+
+    private static class GLESProgramAllocationException extends RuntimeException {}
+
+    private static class GLESProgramLinkException extends RuntimeException {
+        GLESProgramLinkException(int programHandle, int vertexHandle, int fragmentHandle,
+                                 String infoLog) {
+            super("program [" + programHandle + ": " + vertexHandle + " + " + fragmentHandle +
+                    "] encountered problem: " + infoLog);
         }
     }
 }
