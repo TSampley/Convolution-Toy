@@ -178,7 +178,6 @@ public class Camera2Wrapper implements CameraWrapper {
 
             builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, aeTargetFPSRange);
             builder.addTarget(previewSurface);
-            builder.get(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE);
             previewRequest = builder.build();
 
             Log.i(TAG, "building singleRequest");
