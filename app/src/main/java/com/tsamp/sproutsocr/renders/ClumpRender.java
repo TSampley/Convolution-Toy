@@ -30,7 +30,6 @@ public class ClumpRender extends Render {
 //    private int clumpTextureHandle;
 
     private int clumpProgram;
-    private int displayProgram;
 
     private final int imageUnit;
 
@@ -47,12 +46,7 @@ public class ClumpRender extends Render {
         // edge detection fragment shader
         int clumpFragHandle = resources.compileShader(GLES20.GL_FRAGMENT_SHADER,
                 R.raw.clump_frag);
-        // display fragment shader
-        int display2DFragHandle = resources.compileShader(GLES20.GL_FRAGMENT_SHADER,
-                R.raw.display_2d_frag);
-
         clumpProgram = resources.linkProgram(resources.getVertexShader(), clumpFragHandle);
-        displayProgram = resources.linkProgram(resources.getVertexShader(), display2DFragHandle);
 
         // vertex shader
         positionIndex = GLES20.glGetAttribLocation(clumpProgram, vertexPosition);
@@ -61,7 +55,7 @@ public class ClumpRender extends Render {
         externalTextureIndex = GLES20.glGetUniformLocation(clumpProgram, texture);
         radiusIndex = GLES20.glGetUniformLocation(clumpProgram, sampleRadius);
         // display frag shader
-        texture2DIndex = GLES20.glGetUniformLocation(displayProgram, texture);
+        texture2DIndex = GLES20.glGetUniformLocation(resources.getDisplayProgram(), texture);
 
         // create Framebuffer
         int[] handles = new int[1];
@@ -108,7 +102,7 @@ public class ClumpRender extends Render {
         GLES20.glViewport(0, 0, resources.getOutputWidth(), resources.getOutputHeight());
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         // select program
-        GLES20.glUseProgram(displayProgram);
+        GLES20.glUseProgram(resources.getDisplayProgram());
 
         // tell sampler identified by `texture2DIndex` to use texture unit 1
         GLES20.glUniform1i(texture2DIndex, 1);

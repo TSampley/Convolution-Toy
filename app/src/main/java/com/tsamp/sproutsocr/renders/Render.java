@@ -101,16 +101,41 @@ public abstract class Render {
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
     }
 
-    public interface RenderResources {
-        int getOutputWidth();
-        int getOutputHeight();
+    public static abstract class RenderResources {
+        private int displayProgram;
+        public RenderResources(int displayProgram) {
+            this.displayProgram = displayProgram;
+        }
+        public abstract int getOutputWidth();
+        public abstract int getOutputHeight();
+        int getDisplayProgram() {
+            return displayProgram;
+        }
     }
 
-    public interface CompilationResources extends RenderResources {
-        int compileShader(int shaderType, @RawRes int id);
-        int linkProgram(int vertShader, int fragShader);
-        int getVertexShader();
-        int getTextureWidth();
-        int getTextureHeight();
+    public static abstract class CompilationResources extends RenderResources {
+        private int texWidth;
+        private int texHeight;
+
+        private int vertShader;
+
+        public CompilationResources(int width, int height, int vertShader, int displayProgram) {
+            super(displayProgram);
+            texWidth = width;
+            texHeight = height;
+            this.vertShader = vertShader;
+        }
+        public int getVertexShader() {
+            return vertShader;
+        }
+        public int getTextureWidth() {
+            return texWidth;
+        }
+        public int getTextureHeight() {
+            return texHeight;
+        }
+
+        public abstract int compileShader(int shaderType, @RawRes int id);
+        public abstract int linkProgram(int vertShader, int fragShader);
     }
 }

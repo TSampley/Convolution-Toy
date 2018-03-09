@@ -30,7 +30,6 @@ public class EdgeDetectRender extends Render {
 //    private int edgeTextureHandle;
 
     private int edgeProgram;
-    private int displayProgram;
 
     private final int imageUnit;
 
@@ -47,12 +46,7 @@ public class EdgeDetectRender extends Render {
         // edge detection fragment shader
         int edgesFragHandle = resources.compileShader(GLES20.GL_FRAGMENT_SHADER,
                 R.raw.edges_frag);
-        // display fragment shader
-        int display2DFragHandle = resources.compileShader(GLES20.GL_FRAGMENT_SHADER,
-                R.raw.display_2d_frag);
-
         edgeProgram = resources.linkProgram(resources.getVertexShader(), edgesFragHandle);
-        displayProgram = resources.linkProgram(resources.getVertexShader(), display2DFragHandle);
 
         // vertex shader
         positionIndex = GLES20.glGetAttribLocation(edgeProgram, vertexPosition);
@@ -61,7 +55,7 @@ public class EdgeDetectRender extends Render {
         externalTextureIndex = GLES20.glGetUniformLocation(edgeProgram, texture);
         radiusIndex = GLES20.glGetUniformLocation(edgeProgram, sampleRadius);
         // display frag shader
-        texture2DIndex = GLES20.glGetUniformLocation(displayProgram, texture);
+        texture2DIndex = GLES20.glGetUniformLocation(resources.getDisplayProgram(), texture);
 
         // ============================= Framebuffer creation
         // create Framebuffer
@@ -110,7 +104,7 @@ public class EdgeDetectRender extends Render {
         GLES20.glViewport(0, 0, resources.getOutputWidth(), resources.getOutputHeight());
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         // select program
-        GLES20.glUseProgram(displayProgram);
+        GLES20.glUseProgram(resources.getDisplayProgram());
 
         // tell sampler identified by `texture2DIndex` to use texture unit 1
         GLES20.glUniform1i(texture2DIndex, 1);

@@ -325,9 +325,15 @@ public class MainActivity extends AppCompatActivity {
             surfaceTextureHandle = cameraThread.camera.createSurfaceTexture(0);
             // common shader that all Render objects can use if they choose
             String vertCode = readRawResource(getApplicationContext(), R.raw.display_vert);
+            String fragCode = readRawResource(getApplicationContext(), R.raw.display_2d_frag);
             int vertShaderHandle = compileShader(GLES20.GL_VERTEX_SHADER, vertCode);
+            int display2DHandle = compileShader(GLES20.GL_FRAGMENT_SHADER, fragCode);
+            int display2DProgram = compileProgram(vertShaderHandle, display2DHandle);
 
-            compilationResources = new Render.CompilationResources() {
+            compilationResources = new Render.CompilationResources(
+                    cameraThread.camera.getTextureWidth(),
+                    cameraThread.camera.getTextureHeight(),
+                    vertShaderHandle, display2DProgram) {
                 @Override
                 public int compileShader(int shaderType, int id) {
                     return MainActivity.compileShader(shaderType,
@@ -337,21 +343,6 @@ public class MainActivity extends AppCompatActivity {
                 @Override
                 public int linkProgram(int vertShader, int fragShader) {
                     return MainActivity.compileProgram(vertShader, fragShader);
-                }
-
-                @Override
-                public int getVertexShader() {
-                    return vertShaderHandle;
-                }
-
-                @Override
-                public int getTextureWidth() {
-                    return cameraThread.camera.getTextureWidth();
-                }
-
-                @Override
-                public int getTextureHeight() {
-                    return cameraThread.camera.getTextureHeight();
                 }
 
                 @Override
