@@ -24,7 +24,7 @@ import android.widget.Toast;
 
 import com.tsamp.sproutsocr.renders.ClumpRender;
 import com.tsamp.sproutsocr.renders.DisplayRender;
-import com.tsamp.sproutsocr.renders.EdgeDetectRender;
+import com.tsamp.sproutsocr.renders.AverageDifferenceRender;
 import com.tsamp.sproutsocr.renders.Render;
 
 import java.io.IOException;
@@ -302,7 +302,7 @@ public class MainActivity extends AppCompatActivity {
         GLRenderer() {
             programs = new Render[]{
                     new DisplayRender(),
-                    new EdgeDetectRender(0, 1),
+                    new AverageDifferenceRender(0, 1),
                     new ClumpRender(1, 2)
             };
             renderStep = 0;

@@ -9,15 +9,15 @@ import com.tsamp.sproutsocr.R;
  * @author taushsampley
  */
 
-public class EdgeDetectRender extends TextureRender {
+public class AverageDifferenceRender extends TextureRender {
 
-    private static final String TAG = "EdgeDetectRender";
+    private static final String TAG = "AverageDifferenceRender";
 
     private static final String sampleRadius = "u_radius";
 
     private int radiusIndex;
 
-    public EdgeDetectRender(int sourceImageUnit, int targetImageUnit) {
+    public AverageDifferenceRender(int sourceImageUnit, int targetImageUnit) {
         super(sourceImageUnit, targetImageUnit);
     }
 
