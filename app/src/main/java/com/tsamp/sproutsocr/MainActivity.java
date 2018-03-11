@@ -302,8 +302,8 @@ public class MainActivity extends AppCompatActivity {
         GLRenderer() {
             programs = new Render[]{
                     new DisplayRender(),
-                    new EdgeDetectRender(1),
-                    new ClumpRender(2)
+                    new EdgeDetectRender(0, 1),
+                    new ClumpRender(1, 2)
             };
             renderStep = 0;
         }
@@ -370,9 +370,6 @@ public class MainActivity extends AppCompatActivity {
             Log.i(TAG, "renderer surface changed");
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
             GLES20.glViewport(0, 0, width, height);
-//            GLES20.glViewport(0, 0,
-//                    Math.max(width, cameraThread.camera.getTextureWidth()),
-//                    Math.max(height, cameraThread.camera.getTextureHeight()));
         }
 
         @Override
