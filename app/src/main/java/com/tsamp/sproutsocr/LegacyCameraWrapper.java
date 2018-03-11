@@ -179,7 +179,7 @@ public class LegacyCameraWrapper implements CameraWrapper {
     private class JpegCallback implements Camera.PictureCallback {
         @Override
         public void onPictureTaken(byte[] data, Camera camera) {
-            Log.i(TAG, "jpeg receieved");
+            Log.i(TAG, "jpeg received");
 
             snapshotCallback.onImageCaptured();
         }
