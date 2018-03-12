@@ -23,12 +23,11 @@ public class AverageDifferenceRender extends TextureRender {
 
     @Override
     protected int getFragmentSource() {
-        return R.raw.edges_frag;
+        return R.raw.avg_diff;
     }
 
     @Override
     protected void collectIndices() {
-        // no indices to collect
         radiusIndex = GLES20.glGetUniformLocation(getProgram(), sampleRadius);
     }
 

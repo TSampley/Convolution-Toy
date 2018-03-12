@@ -2,6 +2,8 @@ package com.tsamp.sproutsocr;
 
 import android.graphics.SurfaceTexture;
 
+import java.nio.ByteBuffer;
+
 /**
  * @author taushsampley
  */
@@ -76,7 +78,7 @@ public interface CameraWrapper {
      */
     interface SnapshotCallback {
         void onCameraOpened();
-        void onImageCaptured();
+        void onImageCaptured(ByteBuffer imageData, int width, int height);
         void onCameraClosed();
     }
 }

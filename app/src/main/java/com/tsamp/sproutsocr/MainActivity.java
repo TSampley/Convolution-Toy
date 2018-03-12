@@ -22,13 +22,14 @@ import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.tsamp.sproutsocr.renders.ClumpRender;
 import com.tsamp.sproutsocr.renders.DisplayRender;
-import com.tsamp.sproutsocr.renders.AverageDifferenceRender;
+import com.tsamp.sproutsocr.renders.EdgeRender;
+import com.tsamp.sproutsocr.renders.LumaRender;
 import com.tsamp.sproutsocr.renders.Render;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 
 import javax.microedition.khronos.egl.EGLConfig;
@@ -264,9 +265,10 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @Override
-        public void onImageCaptured() {
+        public void onImageCaptured(ByteBuffer imageData, int width, int height) {
             Log.i(TAG, "onImageCaptured");
 
+            renderer.uploadImage(imageData, width, height);
             runOnUiThread(() -> {
                 buttonCapture.setText(R.string.retake_pic);
                 buttonProcess.setEnabled(true);
@@ -297,19 +299,46 @@ public class MainActivity extends AppCompatActivity {
         private int renderStep;
 
         private int surfaceTextureHandle;
+        private int lumaTextureHandle;
         private Render.CompilationResources compilationResources;
+
+        private ByteBuffer imageData;
+        private int width;
+        private int height;
 
         GLRenderer() {
             programs = new Render[]{
                     new DisplayRender(),
-                    new AverageDifferenceRender(0, 1),
-                    new ClumpRender(1, 2)
+//                    new AverageDifferenceRender(0, 1),
+//                    new ClumpRender(1, 2),
+                    new LumaRender(0, 3),
+                    new EdgeRender(3, 4)
             };
             renderStep = 0;
+
+            imageData = null;
         }
 
         void setRenderStep(int renderStep) {
             this.renderStep = renderStep % programs.length;
+        }
+
+        synchronized void uploadImage(ByteBuffer imageData, int width, int height) {
+            this.imageData = imageData;
+            this.width = width;
+            this.height = height;
+
+            glSurfaceView.queueEvent(this::uploadImage);
+        }
+
+        synchronized void uploadImage() {
+            Log.i(TAG, "upload Image called");
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, lumaTextureHandle);
+            // fill with initial texture data
+            GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE,
+                    width, height, 0, GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, imageData);
+            imageData = null;
         }
 
         // ============================= GLSurfaceView.Renderer
@@ -321,8 +350,21 @@ public class MainActivity extends AppCompatActivity {
             GLES20.glGetIntegerv(GLES20.GL_MAX_TEXTURE_IMAGE_UNITS, result, 0);
             Log.i(TAG, "max units: " + result[0]);
 
+            int[] handles = new int[1];
             // SurfaceTexture that all Render objects can use if they choose
             surfaceTextureHandle = cameraThread.camera.createSurfaceTexture(0);
+            GLES20.glGenTextures(1, handles, 0);
+            lumaTextureHandle = handles[0];
+            // set texture unit
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+            // bind texture object to external target
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, lumaTextureHandle);
+            // set the target's params
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,
+                    GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,
+                    GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST);
+
             // common shader that all Render objects can use if they choose
             String vertCode = readRawResource(getApplicationContext(), R.raw.display_vert);
             String fragCode = readRawResource(getApplicationContext(), R.raw.display_2d_frag);

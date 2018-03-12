@@ -8,6 +8,8 @@ import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 
+import java.nio.ByteBuffer;
+
 /**
  * @author taushsampley
  */
@@ -181,7 +183,9 @@ public class LegacyCameraWrapper implements CameraWrapper {
         public void onPictureTaken(byte[] data, Camera camera) {
             Log.i(TAG, "jpeg received");
 
-            snapshotCallback.onImageCaptured();
+            ByteBuffer imageData = ByteBuffer.allocate(data.length);
+            imageData.put(data);
+            snapshotCallback.onImageCaptured(imageData, 0, 0);
         }
     }
 }

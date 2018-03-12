@@ -14,6 +14,8 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
+import android.media.Image;
+import android.media.ImageReader;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES20;
 import android.os.Handler;
@@ -25,6 +27,7 @@ import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 
 /**
@@ -80,19 +83,21 @@ public class Camera2Wrapper implements CameraWrapper {
 
     // previewSurface is available when SurfaceCallback#surfaceCreated(SurfaceHolder) is called
     private Surface previewSurface;
-    // processSurface is available when a activeCamera is selected to open
-    private Surface processSurface;
+    // colorSurface is available when a activeCamera is selected to open
+    private Surface colorSurface;
+    private Surface luminanceSurface;
 
     // previewRequest is available once activeCamera and previewSurface is available
     private CaptureRequest previewRequest;
-    // singleRequest is available once activeCamera, processSurface, and previewSurface is available
+    // singleRequest is available once activeCamera, colorSurface, and previewSurface is available
     private CaptureRequest singleRequest;
 
     // captureSession is available after the activeCamera and both surfaces are available
     private CameraCaptureSession captureSession;
 
-    private SurfaceTexture surfaceTexture;
     private Size surfaceTextureSize;
+    private SurfaceTexture surfaceTexture;
+    private ImageReader imageReader;
     private final CameraStateCallback cameraStateCallback;
     private final SessionStateCallback sessionStateCallback;
     private final SessionCaptureCallback previewCaptureCallback;
@@ -107,13 +112,15 @@ public class Camera2Wrapper implements CameraWrapper {
         streamConfigurationMap = null;
         activeCamera = null;
         previewSurface = null;
-        processSurface = null;
+        colorSurface = null;
+        luminanceSurface = null;
         captureSession = null;
         previewRequest = null;
         singleRequest = null;
 
-        surfaceTexture = null;
         surfaceTextureSize = null;
+        surfaceTexture = null;
+        imageReader = null;
         cameraStateCallback = new CameraStateCallback();
         sessionStateCallback = new SessionStateCallback();
         previewCaptureCallback = new SessionCaptureCallback(0, null);
@@ -143,47 +150,28 @@ public class Camera2Wrapper implements CameraWrapper {
             throw new IllegalStateException("SCALAR_STREAM_CONFIGURATION_MAP is null " +
                     "in CameraCharacteristics");
         } else {
-//            int imageFormat = ImageFormat.YUV_420_888;
-//            Size imageSize;
             Range<Integer> aeTargetFPSRange = new Range<>(15, 15);
 
-//            // set image output size
-//            Size[] outputSizes = streamConfigMap.getOutputSizes(imageFormat);
-//            Log.i(TAG, "SIZES: ");
-//            for (Size size : outputSizes) {
-//                Log.i(TAG, size.toString());
-//            }
-//            imageSize = outputSizes[outputSizes.length-1];
-
             // set Auto Exposure FPS Range
-            Range<Integer>[] availableRanges =
-                    characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
+            Range<Integer>[] availableRanges = characteristics.get(
+                    CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
             if (availableRanges != null) {
                 // just choose the first one
                 aeTargetFPSRange = availableRanges[0];
-            } //else {
-//                // these values are according to documentation in
-//                // CameraCharacters.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES
-//                int min = 15;
-//                Range<Integer>[] fpsRange =
-//                        streamConfigMap.getHighSpeedVideoFpsRangesFor(outputSizes[0]);
-//                int max = fpsRange[0].getLower();
-//                aeTargetFPSRange = new Range<>(min, max);
-//            }
+            }
 
             // request for previewing activeCamera
             CaptureRequest.Builder builder =
                     activeCamera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-            // set image size
 
             builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, aeTargetFPSRange);
             builder.addTarget(previewSurface);
             previewRequest = builder.build();
 
-            Log.i(TAG, "building singleRequest");
             // request for taking a picture and processing it
             builder = activeCamera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
-            builder.addTarget(processSurface);
+            builder.addTarget(colorSurface);
+            builder.addTarget(luminanceSurface);
 //        builder.addTarget(previewSurface);
             singleRequest = builder.build();
         }
@@ -199,6 +187,24 @@ public class Camera2Wrapper implements CameraWrapper {
         GLES20.glGenTextures(1, texHandles, 0);
         int textureHandle = texHandles[0];
         if (textureHandle > 0) { // 0 is reserved, so it will never be generated
+            try {
+                // for now assume camera 0
+                String stringId = manager.getCameraIdList()[0];
+                CameraCharacteristics characteristics = manager.getCameraCharacteristics(stringId);
+                StreamConfigurationMap streamConfigurationMap =
+                        characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+                if (streamConfigurationMap == null) {
+                    throw new IllegalStateException();
+                }
+                Size[] sizes = streamConfigurationMap.getOutputSizes(ImageFormat.YUV_420_888);
+                if (sizes == null) {
+                    throw new IllegalStateException();
+                }
+                surfaceTextureSize = sizes[0];
+            } catch (CameraAccessException e) {
+                e.printStackTrace();
+            }
+
             // set texture unit
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0 + imageUnit);
             // bind texture object to external target
@@ -210,27 +216,15 @@ public class Camera2Wrapper implements CameraWrapper {
                     GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST);
 
             surfaceTexture = new SurfaceTexture(textureHandle, false);
+            surfaceTexture.setDefaultBufferSize(
+                    surfaceTextureSize.getWidth(),
+                    surfaceTextureSize.getHeight());
+            imageReader = ImageReader.newInstance(
+                    surfaceTextureSize.getWidth(), surfaceTextureSize.getHeight(),
+                    ImageFormat.YUV_420_888, 1);
 
-            try {
-                // for now assume camera 0
-                String stringId = manager.getCameraIdList()[0];
-                CameraCharacteristics characteristics = manager.getCameraCharacteristics(stringId);
-                StreamConfigurationMap streamConfigurationMap =
-                        characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-                if (streamConfigurationMap != null) {
-                    Size[] sizes = streamConfigurationMap.getOutputSizes(ImageFormat.YUV_420_888);
-                    if (sizes != null) {
-                        surfaceTextureSize = sizes[0];
-                        surfaceTexture.setDefaultBufferSize(
-                                surfaceTextureSize.getWidth(),
-                                surfaceTextureSize.getHeight());
-                    }
-                }
-            } catch (CameraAccessException e) {
-                e.printStackTrace();
-            }
-
-            processSurface = new Surface(surfaceTexture);
+            colorSurface = new Surface(surfaceTexture);
+            luminanceSurface = imageReader.getSurface();
         } else {
             throw new IllegalStateException("Unable to acquire texture handle.");
         }
@@ -244,7 +238,7 @@ public class Camera2Wrapper implements CameraWrapper {
 
     @Override
     public boolean canOpen() {
-        return previewSurface != null && processSurface != null;
+        return previewSurface != null && colorSurface != null;
     }
 
 //    @Override
@@ -330,9 +324,13 @@ public class Camera2Wrapper implements CameraWrapper {
                 previewSurface.release();
                 previewSurface = null;
             }
-            if (processSurface != null) {
-                processSurface.release();
-                processSurface = null;
+            if (colorSurface != null) {
+                colorSurface.release();
+                colorSurface = null;
+            }
+            if (luminanceSurface != null) {
+                luminanceSurface.release();
+                luminanceSurface = null;
             }
 
             // release requests
@@ -390,7 +388,8 @@ public class Camera2Wrapper implements CameraWrapper {
                 buildRequests();
 
                 Log.i(TAG, "creating capture session");
-                activeCamera.createCaptureSession(Arrays.asList(previewSurface, processSurface),
+                activeCamera.createCaptureSession(
+                        Arrays.asList(previewSurface, colorSurface, luminanceSurface),
                         sessionStateCallback, cameraHandler);
                 // result will be in SessionStateCallback#onConfigured(CameraCaptureSession) or
                 // SessionStateCallback#onConfigureFailed(CameraCapture Session)
@@ -503,7 +502,18 @@ public class Camera2Wrapper implements CameraWrapper {
             // a single capture has completed. if this is a repeating request, there could be more
             // captures coming. #onCaptureSequenceCompleted is called when it's completely done.
             if (snapshotCallback != null) {
-                snapshotCallback.onImageCaptured();
+                Image latestImage = imageReader.acquireLatestImage();
+                Image.Plane[] planes = latestImage.getPlanes();
+                Image.Plane luminance = planes[0];
+                ByteBuffer buffer = luminance.getBuffer();
+                ByteBuffer copy = ByteBuffer.allocate(buffer.capacity());
+                copy.put(buffer);
+                copy.position(0);
+
+                latestImage.close();
+
+                snapshotCallback.onImageCaptured(copy,
+                        imageReader.getWidth(), imageReader.getHeight());
             }
         }
 
