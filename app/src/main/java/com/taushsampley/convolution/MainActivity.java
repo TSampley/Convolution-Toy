@@ -1,18 +1,24 @@
-package com.tsamp.sproutsocr;
+package com.taushsampley.convolution;
 
 import android.Manifest;
 import android.app.ActivityManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.ConfigurationInfo;
+import android.graphics.Bitmap;
+import android.net.Uri;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.support.annotation.IntDef;
 import android.support.annotation.NonNull;
 import android.support.annotation.RawRes;
+import android.support.annotation.StringRes;
 import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.FileProvider;
 import android.support.v4.content.PermissionChecker;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
@@ -22,13 +28,19 @@ import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.tsamp.sproutsocr.renders.DisplayRender;
-import com.tsamp.sproutsocr.renders.EdgeRender;
-import com.tsamp.sproutsocr.renders.LumaRender;
-import com.tsamp.sproutsocr.renders.Render;
+import com.taushsampley.convolution.renders.DisplayRender;
+import com.taushsampley.convolution.renders.EdgeRender;
+import com.taushsampley.convolution.renders.LumaRender;
+import com.taushsampley.convolution.renders.Render;
+import com.taushsampley.convolution.renders.TextureRender;
+import com.tsamp.sproutsocr.R;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 
@@ -50,22 +62,114 @@ import javax.microedition.khronos.opengles.GL10;
  */
 public class MainActivity extends AppCompatActivity {
 
+    // taken from the Toast source file in order to enforce @Duration type
+    @IntDef({Toast.LENGTH_SHORT, Toast.LENGTH_LONG})
+    @Retention(RetentionPolicy.SOURCE)
+    @interface Duration {}
+
+    // region Constants
+
     private static final String TAG = "MainActivity";
+
+    private static final String DIRECTORY_IMAGES = "images";
+    private static final String FILE_IMAGE_PREFIX = "processedImage_";
 
     private static final int PERMISSION_REQUEST_CAMERA = 1;
 
+    // endregion
+
+    // region UI
     private SurfaceView surfaceView;
     private GLSurfaceView glSurfaceView;
     private TextView textView;
     private Button buttonCapture;
     private Button buttonProcess;
+    private Button buttonSave;
 
+    private Toast currentToast;
+    // endregion
+
+    // region Threads
     private CameraThread cameraThread;
     private GLRenderer renderer;
+    // endregion
 
     public MainActivity() {
         super();
     }
+
+    // region private
+
+    private synchronized void presentToast(@StringRes int id, @Duration int duration) {
+        Toast newToast = Toast.makeText(getApplicationContext(), id, duration);
+        if (currentToast != null) {
+            currentToast.cancel();
+        }
+        if (newToast != null) {
+            newToast.show();
+        }
+        currentToast = newToast;
+    }
+
+    private synchronized void presentToast(String message, @Duration int duration) {
+        Toast newToast = Toast.makeText(getApplicationContext(), message, duration);
+        if (currentToast != null) {
+            currentToast.cancel();
+        }
+        if (newToast != null) {
+            newToast.show();
+        }
+        currentToast = newToast;
+    }
+
+    private void saveBitmap(Bitmap bitmap) {
+        File directory = getFilesDir();
+        File album = new File(directory, DIRECTORY_IMAGES);
+
+        if (album.exists() || album.mkdirs()) {
+            Log.i(TAG, "album exists: " + album.exists());
+
+            File[] existingFiles = album.listFiles();
+            for (File file : existingFiles) {
+                if (file.getName().startsWith(FILE_IMAGE_PREFIX)) {
+                    if (file.delete()) {
+                        Log.i(TAG, "delete success: " + file.getName());
+                    } else {
+                        Log.i(TAG, "delete failure: " + file.getName());
+                    }
+                }
+            }
+
+            presentToast(R.string.save_image_progress, Toast.LENGTH_SHORT);
+            cameraThread.handler.post(() -> {
+                try {
+                    File imageFile = new File(album,
+                            FILE_IMAGE_PREFIX + System.currentTimeMillis() + ".png");
+                    FileOutputStream fos = new FileOutputStream(imageFile);
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
+                    fos.close();
+
+                    presentToast(R.string.save_image_success, Toast.LENGTH_SHORT);
+
+                    Uri contentUri = FileProvider.getUriForFile(this,
+                            getPackageName(), imageFile);
+                    Intent intent = new Intent();
+                    intent.setAction(Intent.ACTION_VIEW);
+                    intent.setData(contentUri);
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    startActivity(intent);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            });
+        } else {
+            presentToast("Could not acquire album handle", Toast.LENGTH_SHORT);
+        }
+    }
+
+    // endregion
+
+    // region public
 
     public static String readRawResource(Context context, @RawRes int id) {
         InputStream inputStream = context.getResources().openRawResource(id);
@@ -85,7 +189,51 @@ public class MainActivity extends AppCompatActivity {
         return result;
     }
 
-    // ============================= Hooks
+    public static int compileShader(int shaderType, String source) {
+        int shaderHandle = GLES20.glCreateShader(shaderType);
+
+        if (shaderHandle == 0) {
+            throw new GLESShaderAllocationException();
+        } else {
+            GLES20.glShaderSource(shaderHandle, source);
+            GLES20.glCompileShader(shaderHandle);
+            int[] compileStatus = new int[1];
+            GLES20.glGetShaderiv(shaderHandle, GLES20.GL_COMPILE_STATUS, compileStatus, 0);
+
+            if (compileStatus[0] == 0) {
+                String str = GLES20.glGetShaderInfoLog(shaderHandle);
+                GLES20.glDeleteShader(shaderHandle);
+                throw new GLESCompileException(shaderHandle, shaderType, str);
+            }
+        }
+
+        return shaderHandle;
+    }
+
+    public static int compileProgram(int vertexShader, int fragmentShader) {
+        int programHandle = GLES20.glCreateProgram();
+
+        if (programHandle == 0) {
+            throw new GLESProgramAllocationException();
+        } else {
+            GLES20.glAttachShader(programHandle, vertexShader);
+            GLES20.glAttachShader(programHandle, fragmentShader);
+
+            GLES20.glLinkProgram(programHandle);
+            int[] linkStatus = new int[1];
+            GLES20.glGetProgramiv(programHandle, GLES20.GL_LINK_STATUS, linkStatus, 0);
+
+            if (linkStatus[0] == 0) {
+                String str = GLES20.glGetProgramInfoLog(programHandle);
+                GLES20.glDeleteProgram(programHandle);
+                throw new GLESProgramLinkException(programHandle, vertexShader, fragmentShader, str);
+            }
+        }
+
+        return programHandle;
+    }
+
+    // region Callbacks
 
     public void onCaptureClicked(View sender) {
         if (cameraThread.camera.previewing()) {    // capture photo
@@ -100,6 +248,7 @@ public class MainActivity extends AppCompatActivity {
             Log.i(TAG, "CONTINUE PREVIEW");
             buttonCapture.setText(R.string.capture_pic);
             buttonProcess.setEnabled(false);
+            buttonSave.setEnabled(false);
 
             surfaceView.setVisibility(View.VISIBLE);
         }
@@ -109,12 +258,18 @@ public class MainActivity extends AppCompatActivity {
         renderer.setRenderStep(renderer.renderStep+1);
         glSurfaceView.requestRender();
 
-        Toast.makeText(getApplicationContext(),
-                "ran (" + renderer.renderStep + ") program",
-                Toast.LENGTH_SHORT).show();
+        presentToast("ran (" + renderer.renderStep + ") program",
+                Toast.LENGTH_SHORT);
     }
 
-    // ============================= FragmentActivity
+    public void onSaveClicked(View sender) {
+        glSurfaceView.queueEvent(renderer::downloadImage);
+    }
+
+    // endregion
+    // endregion public
+
+    // region FragmentActivity Callbacks
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -140,10 +295,14 @@ public class MainActivity extends AppCompatActivity {
         textView = findViewById(R.id.textView);
         buttonCapture = findViewById(R.id.button_capture);
         buttonProcess = findViewById(R.id.button_process);
+        buttonSave = findViewById(R.id.button_save);
         buttonCapture.setEnabled(false);
+        buttonSave.setEnabled(false);
 
         cameraThread = new CameraThread();
         renderer = new GLRenderer();
+
+        currentToast = null;
 
         // setup the GLSurfaceView to start rendering
         glSurfaceView.setEGLContextClientVersion(2);
@@ -180,6 +339,10 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         glSurfaceView.onResume();
+
+        try {
+            cameraThread.run();
+        } catch (Exception e) {e.printStackTrace();}
     }
 
     @Override
@@ -225,6 +388,8 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // endregion
+
     private class CameraThread extends Thread implements CameraWrapper.SnapshotCallback {
 
         private static final String TAG = "CameraThread";
@@ -235,7 +400,22 @@ public class MainActivity extends AppCompatActivity {
             super("Camera Thread");
         }
 
-        // ============================= Thread
+        // region public
+
+        CameraWrapper getCamera(Handler handler) {
+            CameraWrapper camera;
+            // each constructor should use the handler they are passed to seed the loop
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                camera = new Camera2Wrapper(getApplicationContext(), surfaceView, handler, this);
+            } else {
+                camera = new LegacyCameraWrapper(surfaceView, handler, this);
+            }
+            return camera;
+        }
+
+        // endregion
+
+        // region Runnable
 
         @Override
         public void run() {
@@ -243,18 +423,15 @@ public class MainActivity extends AppCompatActivity {
             Looper.prepare();
             handler = new Handler();
 
-            // each constructor should use the handler they are passed to seed the loop
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                camera = new Camera2Wrapper(getApplicationContext(), surfaceView, handler, this);
-            } else {
-                camera = new LegacyCameraWrapper(surfaceView, handler, this);
-            }
+            camera = getCamera(handler);
 
             // after initial camera setup, dedicate this Thread to receiving messages.
             Looper.loop();
         }
 
-        // ============================= CameraWrapper.SnapshotCallback
+        // endregion
+
+        // region CameraWrapper.SnapshotCallback
 
         @Override
         public void onCameraOpened() {
@@ -272,6 +449,7 @@ public class MainActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 buttonCapture.setText(R.string.retake_pic);
                 buttonProcess.setEnabled(true);
+                buttonSave.setEnabled(true);
                 surfaceView.setVisibility(View.INVISIBLE);
                 glSurfaceView.requestRender();
             });
@@ -288,6 +466,8 @@ public class MainActivity extends AppCompatActivity {
                 textView.setVisibility(View.VISIBLE);
             });
         }
+
+        // endregion
     }
 
     private class GLRenderer implements GLSurfaceView.Renderer {
@@ -296,6 +476,7 @@ public class MainActivity extends AppCompatActivity {
 //        private static final int STEP_OUTLINE = 1;
 
         private Render[] programs;
+        private TextureRender edgeProgram;
         private int renderStep;
 
         private int surfaceTextureHandle;
@@ -312,7 +493,7 @@ public class MainActivity extends AppCompatActivity {
 //                    new AverageDifferenceRender(0, 1),
 //                    new ClumpRender(1, 2),
                     new LumaRender(0, 3),
-                    new EdgeRender(3, 4)
+                    edgeProgram = new EdgeRender(3, 4)
             };
             renderStep = 0;
 
@@ -339,6 +520,22 @@ public class MainActivity extends AppCompatActivity {
             GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE,
                     width, height, 0, GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, imageData);
             imageData = null;
+        }
+
+        synchronized void downloadImage() {
+            int width = compilationResources.getTextureWidth();
+            int height = compilationResources.getTextureHeight();
+            ByteBuffer imageBuffer = ByteBuffer.allocate(width*height*4);
+            imageBuffer.position(0);
+
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, edgeProgram.getTargetFramebuffer());
+            GLES20.glReadPixels(0, 0, width, height,
+                    GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, imageBuffer);
+
+            final Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            bitmap.copyPixelsFromBuffer(imageBuffer);
+
+            runOnUiThread(() -> saveBitmap(bitmap));
         }
 
         // ============================= GLSurfaceView.Renderer
@@ -431,49 +628,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    public static int compileShader(int shaderType, String source) {
-        int shaderHandle = GLES20.glCreateShader(shaderType);
-
-        if (shaderHandle == 0) {
-            throw new GLESShaderAllocationException();
-        } else {
-            GLES20.glShaderSource(shaderHandle, source);
-            GLES20.glCompileShader(shaderHandle);
-            int[] compileStatus = new int[1];
-            GLES20.glGetShaderiv(shaderHandle, GLES20.GL_COMPILE_STATUS, compileStatus, 0);
-
-            if (compileStatus[0] == 0) {
-                String str = GLES20.glGetShaderInfoLog(shaderHandle);
-                GLES20.glDeleteShader(shaderHandle);
-                throw new GLESCompileException(shaderHandle, shaderType, str);
-            }
-        }
-
-        return shaderHandle;
-    }
-
-    public static int compileProgram(int vertexShader, int fragmentShader) {
-        int programHandle = GLES20.glCreateProgram();
-
-        if (programHandle == 0) {
-            throw new GLESProgramAllocationException();
-        } else {
-            GLES20.glAttachShader(programHandle, vertexShader);
-            GLES20.glAttachShader(programHandle, fragmentShader);
-
-            GLES20.glLinkProgram(programHandle);
-            int[] linkStatus = new int[1];
-            GLES20.glGetProgramiv(programHandle, GLES20.GL_LINK_STATUS, linkStatus, 0);
-
-            if (linkStatus[0] == 0) {
-                String str = GLES20.glGetProgramInfoLog(programHandle);
-                GLES20.glDeleteProgram(programHandle);
-                throw new GLESProgramLinkException(programHandle, vertexShader, fragmentShader, str);
-            }
-        }
-
-        return programHandle;
-    }
+    // region static classes
 
     private static class GLESShaderAllocationException extends RuntimeException {}
 
@@ -493,4 +648,6 @@ public class MainActivity extends AppCompatActivity {
                     "] encountered problem: " + infoLog);
         }
     }
+
+    // endregion
 }

@@ -4,7 +4,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context="com.tsamp.sproutsocr.MainActivity">
+    tools:context="com.tsamp.sproutsocr.com.taushsampley.convolution.MainActivity">
 
     <SurfaceView
         android:id="@+id/surfaceView"
@@ -49,6 +49,14 @@
         android:orientation="vertical"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
+
+        <Button
+            android:id="@+id/button_save"
+            style="@style/ClearButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:onClick="onSaveClicked"
+            android:text="@string/save_pic" />
 
         <Button
             android:id="@+id/button_process"

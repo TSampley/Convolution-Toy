@@ -24,7 +24,7 @@
         android:theme="@style/AppTheme"
         android:fullBackupContent="false">
         <activity
-            android:name=".MainActivity"
+            android:name="com.taushsampley.convolution.MainActivity"
             android:screenOrientation="landscape">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -35,6 +35,16 @@
                 <action android:name="android.intent.action.VIEW" />
             </intent-filter>
         </activity>
+        
+        <provider
+            android:authorities="${applicationId}"
+            android:name="android.support.v4.content.FileProvider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_provider_paths"/>
+        </provider>
     </application>
 
 </manifest>

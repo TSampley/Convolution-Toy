@@ -1,4 +1,4 @@
-package com.tsamp.sproutsocr;
+package com.taushsampley.convolution;
 
 import android.annotation.TargetApi;
 import android.content.Context;

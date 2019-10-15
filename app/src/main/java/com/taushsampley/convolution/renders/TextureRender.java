@@ -1,4 +1,4 @@
-package com.tsamp.sproutsocr.renders;
+package com.taushsampley.convolution.renders;
 
 import android.opengl.GLES20;
 import android.support.annotation.CallSuper;
@@ -33,6 +33,10 @@ public abstract class TextureRender extends Render {
 
     int getProgram() {
         return program;
+    }
+
+    public int getTargetFramebuffer() {
+        return targetFramebuffer;
     }
 
     @CallSuper

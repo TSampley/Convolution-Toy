@@ -1,8 +1,13 @@
 <resources>
-    <string name="app_name">Sprouts OCR</string>
+    <string name="app_name">Convolution Toy</string>
     <string name="capture_pic">Capture</string>
     <string name="process_pic">Process</string>
     <string name="retake_pic">Retake</string>
+    <string name="save_pic">Save</string>
+    <string name="create_dir_error">Error Creating Directories</string>
+    <string name="save_image_progress">Image Being Created</string>
+    <string name="save_image_success">Image Created Successfully</string>
+    <string name="save_image_error">Error Saving Image</string>
 
     <string name="camera_loading">Camera Loading</string>
     <string name="display_area_description">Display Area</string>

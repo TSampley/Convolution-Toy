@@ -1,4 +1,4 @@
-package com.tsamp.sproutsocr.renders;
+package com.taushsampley.convolution.renders;
 
 import com.tsamp.sproutsocr.R;
 
