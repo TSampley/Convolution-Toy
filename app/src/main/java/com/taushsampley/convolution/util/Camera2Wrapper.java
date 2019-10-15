@@ -1,4 +1,4 @@
-package com.taushsampley.convolution;
+package com.taushsampley.convolution.util;
 
 import android.annotation.TargetApi;
 import android.content.Context;
@@ -105,8 +105,8 @@ public class Camera2Wrapper implements CameraWrapper {
 
     private final Handler cameraHandler;
 
-    Camera2Wrapper(@NonNull Context context, @NonNull SurfaceView surfaceView,
-                   @NonNull Handler cameraHandler, @NonNull SnapshotCallback snapshotCallback) {
+    public Camera2Wrapper(@NonNull Context context, @NonNull SurfaceView surfaceView,
+                          @NonNull Handler cameraHandler, @NonNull SnapshotCallback snapshotCallback) {
         manager = (CameraManager)context.getSystemService(Context.CAMERA_SERVICE);
         characteristics = null;
         streamConfigurationMap = null;

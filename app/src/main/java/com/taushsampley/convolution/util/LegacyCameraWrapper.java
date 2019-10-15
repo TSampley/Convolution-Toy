@@ -1,4 +1,4 @@
-package com.taushsampley.convolution;
+package com.taushsampley.convolution.util;
 
 import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
@@ -29,7 +29,7 @@ public class LegacyCameraWrapper implements CameraWrapper {
 
     private final SnapshotCallback snapshotCallback;
 
-    LegacyCameraWrapper(@NonNull SurfaceView view, @NonNull Handler cameraHandler,
+    public LegacyCameraWrapper(@NonNull SurfaceView view, @NonNull Handler cameraHandler,
                         @NonNull SnapshotCallback snapshotCallback) {
         camera = null;
         surfaceHolder = null;

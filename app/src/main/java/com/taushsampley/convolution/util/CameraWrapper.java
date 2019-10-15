@@ -1,4 +1,4 @@
-package com.taushsampley.convolution;
+package com.taushsampley.convolution.util;
 
 import android.graphics.SurfaceTexture;
 

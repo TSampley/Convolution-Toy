@@ -33,6 +33,9 @@ import com.taushsampley.convolution.renders.EdgeRender;
 import com.taushsampley.convolution.renders.LumaRender;
 import com.taushsampley.convolution.renders.Render;
 import com.taushsampley.convolution.renders.TextureRender;
+import com.taushsampley.convolution.util.Camera2Wrapper;
+import com.taushsampley.convolution.util.CameraWrapper;
+import com.taushsampley.convolution.util.LegacyCameraWrapper;
 
 import java.io.File;
 import java.io.FileOutputStream;
