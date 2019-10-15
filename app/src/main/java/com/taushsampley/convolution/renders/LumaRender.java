@@ -1,6 +1,7 @@
 package com.taushsampley.convolution.renders;
 
-import com.tsamp.sproutsocr.R;
+
+import com.taushsampley.convolution.R;
 
 /**
  * @author taushsampley

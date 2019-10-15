@@ -2,7 +2,8 @@ package com.taushsampley.convolution.renders;
 
 import android.opengl.GLES20;
 
-import com.tsamp.sproutsocr.R;
+import com.taushsampley.convolution.R;
+
 
 /**
  * @author taushsampley
