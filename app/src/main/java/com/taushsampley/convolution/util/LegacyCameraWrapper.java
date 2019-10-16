@@ -11,10 +11,12 @@ import java.nio.ByteBuffer;
 
 import androidx.annotation.NonNull;
 
+
+
 /**
  * @author taushsampley
  */
-
+@SuppressWarnings("deprecation")
 public class LegacyCameraWrapper implements CameraWrapper {
 
     private static final String TAG = "LegacyCameraWrapper";
@@ -31,7 +33,7 @@ public class LegacyCameraWrapper implements CameraWrapper {
     private final SnapshotCallback snapshotCallback;
 
     public LegacyCameraWrapper(@NonNull SurfaceView view, @NonNull Handler cameraHandler,
-                        @NonNull SnapshotCallback snapshotCallback) {
+                               @NonNull SnapshotCallback snapshotCallback) {
         camera = null;
         surfaceHolder = null;
 
@@ -180,6 +182,7 @@ public class LegacyCameraWrapper implements CameraWrapper {
     }
 
     private class JpegCallback implements Camera.PictureCallback {
+
         @Override
         public void onPictureTaken(byte[] data, Camera camera) {
             Log.i(TAG, "jpeg received");
