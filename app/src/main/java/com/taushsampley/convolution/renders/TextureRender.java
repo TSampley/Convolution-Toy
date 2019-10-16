@@ -1,8 +1,9 @@
 package com.taushsampley.convolution.renders;
 
 import android.opengl.GLES20;
-import android.support.annotation.CallSuper;
-import android.support.annotation.RawRes;
+
+import androidx.annotation.CallSuper;
+import androidx.annotation.RawRes;
 
 /**
  * @author taushsampley

@@ -19,7 +19,6 @@ import android.media.ImageReader;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES20;
 import android.os.Handler;
-import android.support.annotation.NonNull;
 import android.util.Log;
 import android.util.Range;
 import android.util.Size;
@@ -29,6 +28,8 @@ import android.view.SurfaceView;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+
+import androidx.annotation.NonNull;
 
 /**
  * <ol>

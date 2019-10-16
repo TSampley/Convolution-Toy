@@ -3,12 +3,13 @@ package com.taushsampley.convolution.util;
 import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
 import android.os.Handler;
-import android.support.annotation.NonNull;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 
 import java.nio.ByteBuffer;
+
+import androidx.annotation.NonNull;
 
 /**
  * @author taushsampley
