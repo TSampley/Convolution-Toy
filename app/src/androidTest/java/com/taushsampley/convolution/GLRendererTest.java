@@ -34,7 +34,7 @@ public class GLRendererTest {
 
     @Before
     public void setUp() throws Exception {
-        appContext = InstrumentationRegistry.getTargetContext();
+        appContext = InstrumentationRegistry.getInstrumentation().getContext();
     }
 
     @Test
