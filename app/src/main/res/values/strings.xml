@@ -11,4 +11,5 @@
 
     <string name="camera_loading">Camera Loading</string>
     <string name="display_area_description">Display Area</string>
+    <string name="title_activity_home">Home</string>
 </resources>
