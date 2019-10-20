@@ -6,11 +6,13 @@
     android:layout_height="match_parent"
     tools:context="com.taushsampley.convolution.HomeActivity"
     tools:showIn="@layout/activity_home"
-    android:background="@color/colorPrimary"
+    android:background="@color/primaryColor"
 
+    app:layout_behavior="@string/appbar_scrolling_view_behavior"
     >
 
     <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recycyler_convolutions"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         app:layout_constraintStart_toStartOf="parent"

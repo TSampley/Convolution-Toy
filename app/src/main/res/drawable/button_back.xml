@@ -1,8 +1,8 @@
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_enabled="true">
-        <color android:color="@color/colorAccent"/>
+        <color android:color="@color/primaryLightColor"/>
     </item>
     <item android:state_enabled="false">
-        <color android:color="@color/colorPrimary"/>
+        <color android:color="@color/primaryColor"/>
     </item>
 </selector>
