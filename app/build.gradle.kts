@@ -28,7 +28,7 @@ android {
 //        unitTests.returnDefaultValues = true
     }
     dataBinding {
-//        enabled = true
+        enable = true
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
